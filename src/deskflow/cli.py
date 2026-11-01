@@ -1,12 +1,11 @@
-"""Command-line entry point for deskflow.
-
-Commands for later phases (collect, train, infer, fix) are not registered
-here yet. Only --version and the root help text are wired up.
-"""
+"""Command-line entry point for deskflow."""
 
 import typer
 
 from deskflow import __version__
+from deskflow.commands.collect import app as collect_app
+from deskflow.commands.doctor import app as doctor_app
+from deskflow.commands.snapshot import app as snapshot_app
 
 app = typer.Typer(
     name="deskflow",
@@ -16,6 +15,11 @@ app = typer.Typer(
     ),
     add_completion=False,
 )
+
+# Register subcommands
+app.add_typer(snapshot_app, name="snapshot")
+app.add_typer(collect_app, name="collect")
+app.add_typer(doctor_app, name="doctor")
 
 
 def _version_callback(value: bool) -> None:
@@ -27,7 +31,7 @@ def _version_callback(value: bool) -> None:
 
 @app.callback()
 def main(
-    version: bool = typer.Option(  # noqa: A002 -- shadowing builtin is intentional here
+    version: bool = typer.Option(
         False,
         "--version",
         callback=_version_callback,

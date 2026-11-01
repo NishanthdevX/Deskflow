@@ -12,15 +12,53 @@ offers safe fixes, and re-measures after a fix.
 It is also a college ML project: model training, offline evaluation, and live accuracy
 comparison are first-class features.
 
-Status: Early development. No functionality is available yet.
+Status: Early development (Phase 1 complete: telemetry collection, performance probe, storage scanning, and run recording).
 
 ## Installation
 
-Not yet available. Will be published to PyPI once Phase 8 is complete.
+Development installation via [uv](https://docs.astral.sh/uv/):
+
+```bash
+git clone <repo-url>
+cd deskflow
+uv sync
+```
 
 ## Usage
 
-Not yet available.
+### Platform Health & Capability Check (`doctor`)
+
+Inspect platform sensor availability, cache directories, and baseline probe execution times:
+
+```bash
+deskflow doctor
+```
+
+### Instant System Snapshot (`snapshot`)
+
+Sample hardware metrics over a 1-second delta, run an inline performance probe, and display a formatted table:
+
+```bash
+deskflow snapshot
+```
+
+To output raw telemetry as machine-readable JSON:
+
+```bash
+deskflow snapshot --json
+```
+
+### Continuous Telemetry Recording (`collect`)
+
+Stream telemetry samples and periodic performance probes into an append-only JSONL run dataset:
+
+```bash
+# Record for 10 minutes (default), probing every 5 seconds
+deskflow collect --duration 600 --interval 2 --probe-interval 5 --label baseline
+
+# Record a quick smoke test run
+deskflow collect --duration 20 --interval 1 --probe-interval 5 --label smoke --out ./data/smoke.jsonl
+```
 
 ## How it works
 

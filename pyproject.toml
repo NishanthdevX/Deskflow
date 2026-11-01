@@ -49,14 +49,20 @@ src = ["src"]
 # UP: pyupgrade, SIM: flake8-simplify, PL: pylint
 select = ["E", "F", "I", "B", "UP", "SIM", "PL"]
 ignore = [
-    # PLR0913: too many arguments -- common in CLI/ML code
+    # PLR0913, PLR0917: argument count -- common in CLI options and complex sampling APIs
     "PLR0913",
+    "PLR0917",
+    # PLR0915, PLR0912, PLR0911: statements/branches/returns in parsers, CLI rendering and scanners
+    "PLR0915",
+    "PLR0912",
+    "PLR0911",
     # PLR2004: magic value comparison -- acceptable in probe thresholds
     "PLR2004",
     # SIM108: ternary operator -- not always clearer
     "SIM108",
-    # PLC0415: import not at top-level -- intentional in test_package.py to
-    # isolate each subpackage import into its own test case
+    # B008: Typer relies on typer.Option() / typer.Argument() in parameter defaults
+    "B008",
+    # PLC0415: import not at top-level -- intentional in tests to isolate imports
     "PLC0415",
 ]
 

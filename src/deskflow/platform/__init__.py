@@ -1,6 +1,16 @@
-"""Platform-abstraction subpackage.
+"""Platform abstraction layer.
 
-All OS-specific code (ctypes, winreg, macOS IOKit calls) lives here behind
-a common interface. Nothing outside this subpackage may import ctypes or
-winreg, or check sys.platform. Implementation is added in Phase 1.
+Exports the get_adapter() factory and all public types. Nothing outside this
+subpackage may import ctypes, winreg, or check sys.platform.
 """
+
+from deskflow.platform.base import BatteryInfo, CacheLocation, CpuFreq, PlatformAdapter
+from deskflow.platform.factory import get_adapter
+
+__all__ = [
+    "BatteryInfo",
+    "CacheLocation",
+    "CpuFreq",
+    "PlatformAdapter",
+    "get_adapter",
+]

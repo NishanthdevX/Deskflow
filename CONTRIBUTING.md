@@ -55,3 +55,4 @@ Platform-specific code lives only in `src/deskflow/platform/`. The steps are:
 New runtime or dev dependencies require an ADR in `docs/decisions/` that justifies
 why the existing dependency set cannot meet the need. Do not add dependencies
 speculatively.
+

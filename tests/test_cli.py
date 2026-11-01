@@ -1,4 +1,6 @@
-"""Tests for the CLI entry point."""
+"""Tests for the CLI entry point and subcommands."""
+
+import json
 
 from typer.testing import CliRunner
 
@@ -20,3 +22,25 @@ def test_help_exits_zero() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "Usage" in result.output
+    assert "snapshot" in result.output
+    assert "collect" in result.output
+    assert "doctor" in result.output
+
+
+def test_snapshot_json_output() -> None:
+    """deskflow snapshot --json should exit 0 and output valid Record JSON."""
+    result = runner.invoke(app, ["snapshot", "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["schema_version"] == 1
+    assert "sample" in data
+    assert "probe" in data
+    assert "top_processes" in data
+
+
+def test_doctor_exits_zero() -> None:
+    """deskflow doctor should exit 0 and report capabilities."""
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 0
+    assert "Platform:" in result.output
+    assert "Verdict:" in result.output

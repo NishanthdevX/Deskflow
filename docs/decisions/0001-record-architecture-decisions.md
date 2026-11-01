@@ -32,3 +32,4 @@ ADRs are stored in `docs/decisions/` as `NNNN-short-title.md`. The format is:
 - Adding a new runtime dependency requires an ADR justifying why the existing set
   cannot meet the need (per AGENTS.md section 3).
 - The numbering is monotonically increasing; superseded ADRs are kept for history.
+

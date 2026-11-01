@@ -52,3 +52,4 @@ body:
       label: Steps to reproduce
     validations:
       required: true
+
