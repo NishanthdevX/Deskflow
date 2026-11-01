@@ -10,8 +10,9 @@ from rich.table import Table
 from deskflow.baseline import (
     CalibrationError,
     calibrate_baseline,
-    load_baseline,
+    load_all_baselines,
 )
+from deskflow.platform import get_adapter
 
 app = typer.Typer(help="Manage and calibrate system performance baselines.")
 console = Console()
@@ -84,29 +85,49 @@ def show_command(
         help="Optional custom path to baseline.json.",
     ),
 ) -> None:
-    """Show the currently calibrated baseline."""
+    """Show calibrated baselines for all power states."""
     try:
-        baseline = load_baseline(path=path)
+        baselines = load_all_baselines(path=path)
     except FileNotFoundError as e:
         console.print(f"[red]Error:[/red] {e}")
         console.print("Run 'deskflow baseline calibrate' to generate an idle baseline.")
         raise typer.Exit(code=1) from e
 
-    table = Table(title="System Performance Baseline", show_header=True)
-    table.add_column("Property", style="bold")
-    table.add_column("Value")
+    adapter = get_adapter()
+    bat = adapter.battery()
+    has_battery = bat is not None
 
-    table.add_row("Machine ID", baseline.machine_id)
-    table.add_row("Created UTC", baseline.created_utc)
-    table.add_row("Platform", baseline.platform)
-    table.add_row("CPU Median Latency", f"{baseline.cpu_ns / 1_000_000:.2f} ms")
-    table.add_row("Memory Median Latency", f"{baseline.mem_ns / 1_000_000:.2f} ms")
-    table.add_row("Disk Median Latency", f"{baseline.disk_ns / 1_000_000:.2f} ms")
-    table.add_row("Total Median Latency", f"{baseline.total_ns / 1_000_000:.2f} ms")
-    table.add_row("Total Latency 10th Percentile", f"{baseline.p10_total_ns / 1_000_000:.2f} ms")
-    table.add_row("Total Latency 90th Percentile", f"{baseline.p90_total_ns / 1_000_000:.2f} ms")
-    table.add_row("Coefficient of Variation", f"{baseline.cv:.3f}")
-    table.add_row("Sample Count", str(baseline.sample_count))
-    table.add_row("Deskflow Version", baseline.deskflow_version)
+    for state in ("ac", "battery"):
+        state_label = "AC Power" if state == "ac" else "Battery Power"
+        base = baselines.get(state)
+        if base is not None:
+            table = Table(title=f"System Performance Baseline ({state_label})", show_header=True)
+            table.add_column("Property", style="bold")
+            table.add_column("Value")
 
-    console.print(table)
+            table.add_row("Power State", state.upper())
+            table.add_row("Machine ID", base.machine_id)
+            table.add_row("Created UTC", base.created_utc)
+            table.add_row("Platform", base.platform)
+            table.add_row("CPU Median Latency", f"{base.cpu_ns / 1_000_000:.2f} ms")
+            table.add_row("Memory Median Latency", f"{base.mem_ns / 1_000_000:.2f} ms")
+            table.add_row("Disk Median Latency", f"{base.disk_ns / 1_000_000:.2f} ms")
+            table.add_row("Total Median Latency", f"{base.total_ns / 1_000_000:.2f} ms")
+            table.add_row(
+                "Total Latency 10th Percentile", f"{base.p10_total_ns / 1_000_000:.2f} ms"
+            )
+            table.add_row(
+                "Total Latency 90th Percentile", f"{base.p90_total_ns / 1_000_000:.2f} ms"
+            )
+            table.add_row("Coefficient of Variation", f"{base.cv:.3f}")
+            table.add_row("Sample Count", str(base.sample_count))
+            table.add_row("Deskflow Version", base.deskflow_version)
+
+            console.print(table)
+        elif state == "battery" and not has_battery:
+            console.print("[dim]Battery Power Baseline: Not applicable (desktop system).[/dim]")
+        else:
+            console.print(
+                f"[yellow]{state_label} Baseline: Missing. "
+                f"Run 'deskflow baseline calibrate' while on {state} power.[/yellow]"
+            )

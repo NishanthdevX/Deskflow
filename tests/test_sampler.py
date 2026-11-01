@@ -64,7 +64,7 @@ class DummyAdapter(PlatformAdapter):
 def test_first_sample_rates_are_none(monkeypatch: pytest.MonkeyPatch) -> None:
     """The first sample must set delta rates to None."""
     adapter = DummyAdapter()
-    sampler = Sampler(adapter=adapter)
+    sampler = Sampler(adapter=adapter, net_interval_s=2.0)
 
     sample, _ = sampler.sample()
 
@@ -79,7 +79,7 @@ def test_first_sample_rates_are_none(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_rate_computation_from_deltas(monkeypatch: pytest.MonkeyPatch) -> None:
     """Subsequent samples must compute rates as deltas divided by elapsed monotonic time."""
     adapter = DummyAdapter()
-    sampler = Sampler(adapter=adapter)
+    sampler = Sampler(adapter=adapter, net_interval_s=2.0)
 
     time_values = [100.0, 102.0]  # dt = 2.0s
     monkeypatch.setattr("time.monotonic", lambda: time_values.pop(0) if time_values else 104.0)
@@ -151,7 +151,7 @@ def test_rate_computation_from_deltas(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_per_process_exceptions_are_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
     """Processes throwing NoSuchProcess, AccessDenied, or ZombieProcess are skipped."""
     adapter = DummyAdapter()
-    sampler = Sampler(adapter=adapter)
+    sampler = Sampler(adapter=adapter, net_interval_s=2.0)
 
     # Mock process_iter to return normal proc and failing procs
     normal_proc = MagicMock()

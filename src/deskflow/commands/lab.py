@@ -313,9 +313,10 @@ def session_command(
         console.print(f"\nRun finished: {out_path.name}")
         completed_keys.add(spec.key)
 
-        # 45 second cooldown if more runs remain
+        # Cooldown between runs
         if idx < len(runs):
-            console.print("Cooling down system for 45s before next run...")
-            time.sleep(45.0)
+            cooldown_s = spec.cooldown_s
+            console.print(f"Cooling down system for {cooldown_s:.0f}s before next run...")
+            time.sleep(cooldown_s)
 
     console.print(f"\n[green]Lab session {session_id} finished successfully.[/green]")

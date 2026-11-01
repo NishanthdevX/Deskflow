@@ -168,8 +168,8 @@ def test_plan_generation_arithmetic() -> None:
     assert quick[-1].scenario == "idle"
 
     standard = get_plan("standard")
-    # Standard plan has 4 scenarios * 5 patterns + 2 idle = 22 runs
-    assert len(standard) in (20, 22)
+    # Standard plan v2 has 4 scenarios * 3 patterns + 2 idle = 14 runs
+    assert len(standard) == 14
     scenarios = {r.scenario for r in standard}
     assert "cpu_pressure" in scenarios
     assert "memory_pressure" in scenarios

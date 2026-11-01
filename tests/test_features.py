@@ -117,14 +117,15 @@ def test_window_statistics_math() -> None:
 
 def test_feature_registry_consistency() -> None:
     """Verify feature registry versioning and uniqueness."""
-    assert FEATURE_SET_VERSION == 1
+    assert FEATURE_SET_VERSION == 2
+    assert len(FEATURE_SPECS) <= 30, "Feature Set v2 must contain at most 30 features"
     names = [spec.name for spec in FEATURE_SPECS]
     assert len(names) == len(set(names)), "Feature names must be strictly unique"
     assert len(FEATURE_NAMES) == len(FEATURE_SPECS)
 
 
 def test_warmup_drop_and_no_lookahead() -> None:
-    """Verify no-lookahead guarantee and that points before 60s are dropped."""
+    """Verify no-lookahead guarantee and that points before 12s are dropped."""
     baseline = _make_dummy_baseline()
     records: list[Record] = []
 
@@ -167,14 +168,14 @@ def test_warmup_drop_and_no_lookahead() -> None:
         )
         records.append(rec)
 
-    # Extract features from full series (horizon 30s)
-    full_rows = extract_run_features(records, baseline=baseline, horizon_s=30.0)
+    # Extract features from full series (horizon 20s)
+    full_rows = extract_run_features(records, baseline=baseline, horizon_s=20.0)
     assert len(full_rows) > 0
 
-    # Decision points before 60s must be dropped
+    # Decision points before 12s must be dropped
     first_row_ts = full_rows[0]["ts_utc"]
     first_epoch = datetime.fromisoformat(first_row_ts).timestamp()
-    assert first_epoch - 1700000000 >= 60.0
+    assert first_epoch - 1700000000 >= 12.0
 
     # No-lookahead test:
     # Pick a decision record around t=80s.
@@ -243,13 +244,12 @@ def test_gap_rule_drops_row() -> None:
 
     rows = extract_run_features(records, baseline=baseline, horizon_s=30.0)
 
-    # Any decision point t where window [t-60, t] contains the gap [70, 82] must be dropped.
+    # Any decision point t where 12s window [t-12, t] contains the gap [70, 82] must be dropped.
     # The gap is active between mono=70 and mono=82.
-    # Decision points from mono=82 up to mono=120 will see the gap if t-60 <= 70.
+    # Decision points from mono=82 up to mono=94 will see the gap if t-12 <= 82.
     for r in rows:
         row_mono = datetime.fromisoformat(r["ts_utc"]).timestamp() - 1700000000
-        # Decision point cannot be between 82 and 130 if window contains the gap
-        assert not (82 <= row_mono < 132), f"Row at {row_mono} should have been dropped due to gap"
+        assert not (82 <= row_mono < 94), f"Row at {row_mono} should have been dropped due to gap"
 
 
 def test_labeling_and_transition_rules() -> None:
@@ -430,12 +430,12 @@ def test_dataset_build_validate_describe_e2e(tmp_path: Path) -> None:
 
 
 def test_synthetic_45s_run_yields_zero_rows() -> None:
-    """Verify that a run shorter than the 60s warm-up window yields zero rows."""
+    """Verify that a run shorter than the warm-up window yields zero rows."""
     baseline = _make_dummy_baseline()
     records: list[Record] = []
 
-    # Run spanning 45 seconds total (0s to 44s, every 2s)
-    for sec in range(0, 45, 2):
+    # Run spanning 10 seconds total (0s to 10s, every 2s; under 12s MIN_HISTORY)
+    for sec in range(0, 11, 2):
         mono = float(sec)
         dt_str = datetime.fromtimestamp(1700000000 + sec, tz=UTC).isoformat()
         sample = _make_sample(mono=mono, ts_utc=dt_str)
@@ -450,7 +450,7 @@ def test_synthetic_45s_run_yields_zero_rows() -> None:
             )
         rec = Record(
             schema_version=1,
-            run_id="run-45s",
+            run_id="run-10s",
             label="idle",
             sample=sample,
             probe=probe,
@@ -467,7 +467,7 @@ def test_synthetic_45s_run_yields_zero_rows() -> None:
         drop_stats=drop_stats,
     )
 
-    # Must yield exactly 0 rows because t - start < 60s for all t in [0, 44]
+    # Must yield exactly 0 rows because t - start < 12s for all t in [0, 10]
     assert len(rows) == 0
     assert drop_stats.get("warm-up") == sum(1 for r in records if r.probe is not None)
 
@@ -519,6 +519,7 @@ def test_merge_datasets_and_validation(tmp_path: Path) -> None:
     df1["target_disk_ratio"] = [1.0, 1.0]
     df1["target_slow"] = [0, 0]
     df1["issue_now"] = ["healthy", "healthy"]
+    df1["baseline_state"] = ["ac", "ac"]
     df1["run_id"] = ["run-1", "run-1"]
     df1["session_id"] = ["sess-1", "sess-1"]
     df1["machine_id"] = ["mach-1", "mach-1"]

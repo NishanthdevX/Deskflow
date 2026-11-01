@@ -179,10 +179,7 @@ class LabRunner:
                     self.scenario.stop()
                     unregister_children(scratch_dir=self.scratch_dir)
 
-                # Collect telemetry sample
-                sample, processes = sampler.sample()
-
-                # Collect probe if due
+                # 1. Run probe first immediately upon waking to measure undisturbed state
                 probe: ProbeResult | None = None
                 if now_mono >= next_probe_mono:
                     if storage_scanner:
@@ -192,6 +189,9 @@ class LabRunner:
                         probe = run_probe()
                     while next_probe_mono <= now_mono:
                         next_probe_mono += self.probe_interval_s
+
+                # 2. Collect telemetry sample
+                sample, processes = sampler.sample()
 
                 storage = storage_scanner.get_cached_report() if storage_scanner else None
                 record = Record(
@@ -229,12 +229,15 @@ class LabRunner:
         actual_timestamps["post_end"] = datetime.now(UTC).isoformat()
 
         stats = self.scenario.get_stats()
+        bat = adapter.battery()
+        power_state = "battery" if (bat is not None and not bat.plugged_in) else "ac"
 
         # Write sidecar JSON
         meta_dict = {
             "scenario": self.scenario.name,
             "intensity": self.scenario.intensity,
             "pattern": self.scenario.pattern,
+            "power_state": power_state,
             "machine_id": self.machine_id,
             "session_id": self.session_id,
             "deskflow_version": __version__,

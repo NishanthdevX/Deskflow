@@ -22,6 +22,7 @@ from deskflow.collector.probe import (
 )
 from deskflow.paths import get_config_dir
 from deskflow.platform import get_adapter
+from deskflow.platform.base import PlatformAdapter
 
 
 class CalibrationError(Exception):
@@ -82,6 +83,7 @@ class Baseline:
     sample_count: int
     deskflow_version: str
     cv: float = 0.0
+    power_state: str = "ac"
     probe_repeats: int = PROBE_REPEATS
     cpu_iterations: int = CPU_PROBE_ITERATIONS
     mem_bytes: int = MEM_PROBE_BYTES
@@ -108,6 +110,7 @@ class Baseline:
             sample_count=int(data["sample_count"]),
             deskflow_version=str(data["deskflow_version"]),
             cv=float(data.get("cv", 0.0)),
+            power_state=str(data.get("power_state", "ac")),
             probe_repeats=int(data.get("probe_repeats", PROBE_REPEATS)),
             cpu_iterations=int(data.get("cpu_iterations", CPU_PROBE_ITERATIONS)),
             mem_bytes=int(data.get("mem_bytes", MEM_PROBE_BYTES)),
@@ -116,32 +119,98 @@ class Baseline:
         )
 
 
+def get_current_power_state(adapter: PlatformAdapter | None = None) -> str:
+    """Determine current device power state ('ac' or 'battery')."""
+    ad = adapter or get_adapter()
+    bat = ad.battery()
+    if bat is None or bat.plugged_in:
+        return "ac"
+    return "battery"
+
+
 def save_baseline(
     baseline: Baseline,
+    power_state: str | None = None,
     path: Path | None = None,
     config_dir: Path | None = None,
 ) -> Path:
-    """Save baseline dataclass to a JSON file atomically."""
+    """Save baseline dataclass merged by power state to JSON file atomically."""
     target_path = path or ((config_dir or get_default_config_dir()) / "baseline.json")
     target_path.parent.mkdir(parents=True, exist_ok=True)
+    state = power_state or baseline.power_state
+
+    current_data: dict[str, Any] = {"ac": None, "battery": None}
+    if target_path.exists():
+        try:
+            with open(target_path, encoding="utf-8") as f:
+                loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    if "ac" in loaded or "battery" in loaded:
+                        current_data["ac"] = loaded.get("ac")
+                        current_data["battery"] = loaded.get("battery")
+                    elif "machine_id" in loaded:
+                        current_data["ac"] = loaded
+        except Exception:
+            pass
+
+    current_data[state] = baseline.to_dict()
+
     temp_path = target_path.with_suffix(".tmp")
     with open(temp_path, "w", encoding="utf-8") as f:
-        json.dump(baseline.to_dict(), f, indent=2)
+        json.dump(current_data, f, indent=2)
     temp_path.replace(target_path)
     return target_path
 
 
-def load_baseline(
+def load_all_baselines(
     path: Path | None = None,
     config_dir: Path | None = None,
-) -> Baseline:
-    """Load baseline from file. Raises FileNotFoundError if missing."""
+) -> dict[str, Baseline | None]:
+    """Load both power-state baselines from baseline.json."""
     target_path = path or ((config_dir or get_default_config_dir()) / "baseline.json")
     if not target_path.exists():
         raise FileNotFoundError(f"Baseline file not found at {target_path}")
+
     with open(target_path, encoding="utf-8") as f:
         data = json.load(f)
-    return Baseline.from_dict(data)
+
+    result: dict[str, Baseline | None] = {"ac": None, "battery": None}
+    if isinstance(data, dict):
+        if "ac" in data or "battery" in data:
+            if data.get("ac"):
+                result["ac"] = Baseline.from_dict(data["ac"])
+            if data.get("battery"):
+                result["battery"] = Baseline.from_dict(data["battery"])
+        elif "machine_id" in data:
+            result["ac"] = Baseline.from_dict(data)
+    return result
+
+
+def load_baseline(
+    power_state: str | None = None,
+    path: Path | None = None,
+    config_dir: Path | None = None,
+) -> Baseline:
+    """Load baseline for a specific power state ('ac' or 'battery')."""
+    target_path = path or ((config_dir or get_default_config_dir()) / "baseline.json")
+    if not target_path.exists():
+        raise FileNotFoundError(f"Baseline file not found at {target_path}")
+
+    state = power_state or get_current_power_state()
+    all_baselines = load_all_baselines(path=path, config_dir=config_dir)
+
+    target_baseline = all_baselines.get(state)
+    if target_baseline is None and power_state is None:
+        # Fallback to 'ac' or first available baseline when power_state not explicitly requested
+        target_baseline = all_baselines.get("ac") or next(
+            (b for b in all_baselines.values() if b is not None), None
+        )
+    if target_baseline is None:
+        raise FileNotFoundError(
+            f"Baseline for power state '{state}' not found in {target_path}. "
+            f"Run 'deskflow baseline calibrate' while on {state} power."
+        )
+    return target_baseline
 
 
 def calibrate_baseline(
@@ -202,6 +271,7 @@ def calibrate_baseline(
 
     machine_id = get_or_create_machine_id(config_dir=config_dir)
     adapter = get_adapter()
+    power_state = get_current_power_state(adapter)
     import numpy as np
 
     baseline = Baseline(
@@ -217,6 +287,7 @@ def calibrate_baseline(
         sample_count=len(usable),
         deskflow_version=__version__,
         cv=float(cv),
+        power_state=power_state,
         probe_repeats=PROBE_REPEATS,
         cpu_iterations=CPU_PROBE_ITERATIONS,
         mem_bytes=MEM_PROBE_BYTES,
@@ -224,5 +295,5 @@ def calibrate_baseline(
         disk_bytes=DISK_PROBE_BYTES,
     )
 
-    save_baseline(baseline, path=out_path, config_dir=config_dir)
+    save_baseline(baseline, power_state=power_state, path=out_path, config_dir=config_dir)
     return baseline

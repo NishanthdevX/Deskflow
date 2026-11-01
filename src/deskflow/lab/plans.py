@@ -13,13 +13,14 @@ class LabRunSpec:
     scenario: str
     intensity: Intensity
     pattern: Pattern
-    pre_s: float = 30.0
-    hold_s: float = 180.0
-    post_s: float = 60.0
+    pre_s: float = 20.0
+    hold_s: float = 90.0
+    post_s: float = 30.0
+    cooldown_s: float = 20.0
 
     @property
     def total_duration_s(self) -> float:
-        """Total duration of this run in seconds."""
+        """Total duration of this run in seconds (excluding cooldown)."""
         return self.pre_s + self.hold_s + self.post_s
 
     @property
@@ -45,10 +46,8 @@ def get_plan(plan_name: PlanName) -> list[LabRunSpec]:
     if plan_name == "standard":
         scenarios = ["cpu_pressure", "memory_pressure", "disk_pressure", "background_load"]
         run_matrix: list[tuple[Intensity, Pattern]] = [
-            ("low", "constant"),
             ("medium", "constant"),
-            ("medium", "ramp"),
-            ("high", "constant"),
+            ("high", "ramp"),
             ("high", "burst"),
         ]
 
@@ -57,7 +56,7 @@ def get_plan(plan_name: PlanName) -> list[LabRunSpec]:
             for intensity, pattern in run_matrix:
                 runs.append(LabRunSpec(scenario=s, intensity=intensity, pattern=pattern))
 
-        # Two idle runs included (total 20 runs)
+        # Two idle runs included (total 14 runs)
         runs.append(LabRunSpec(scenario="idle", intensity="medium", pattern="constant"))
         runs.append(LabRunSpec(scenario="idle", intensity="medium", pattern="constant"))
         return runs

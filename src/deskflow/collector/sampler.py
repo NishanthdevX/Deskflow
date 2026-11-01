@@ -22,6 +22,7 @@ class Sampler:
         adapter: PlatformAdapter,
         interval_s: float = 1.0,
         process_interval_s: float = 10.0,
+        net_interval_s: float = 10.0,
     ) -> None:
         """Initialize the sampler, priming psutil system CPU counters.
 
@@ -29,10 +30,12 @@ class Sampler:
             adapter: PlatformAdapter instance for OS metric calls.
             interval_s: Telemetry sampling interval in seconds.
             process_interval_s: Process table enumeration interval in seconds (default 10s).
+            net_interval_s: Network I/O counter sampling interval in seconds (default 10s).
         """
         self._adapter = adapter
         self.interval_s = interval_s
         self.process_interval_s = process_interval_s
+        self.net_interval_s = net_interval_s
 
         # Prime global CPU counters
         psutil.cpu_percent(interval=None, percpu=True)
@@ -55,6 +58,9 @@ class Sampler:
         self._last_process_sample_mono: float | None = None
         self._cached_processes: list[ProcessSample] = []
         self._ownership_cache: dict[tuple[int, float], bool] = {}
+        self._last_net_sample_mono: float | None = None
+        self._cached_net_io: Any | None = None
+        self._cached_net_rates: tuple[float, float, float, float] | None = None
 
         # Cache boot time to avoid disk/eventlog queries per tick
         try:
@@ -100,7 +106,29 @@ class Sampler:
         # 3. Delta counters: CPU switches/interrupts, Disk I/O, Network I/O
         curr_cpu_stats = psutil.cpu_stats() if hasattr(psutil, "cpu_stats") else None
         curr_disk_io = psutil.disk_io_counters() if hasattr(psutil, "disk_io_counters") else None
-        curr_net_io = psutil.net_io_counters() if hasattr(psutil, "net_io_counters") else None
+
+        # Sample network counters on net_interval_s cadence to avoid syscall overhead per tick
+        is_net_sample_due = (
+            self._cached_net_io is None
+            or self._last_net_sample_mono is None
+            or (monotonic_s - self._last_net_sample_mono) >= self.net_interval_s
+        )
+        if is_net_sample_due:
+            new_net_io = psutil.net_io_counters() if hasattr(psutil, "net_io_counters") else None
+            if self._last_net_sample_mono is not None and new_net_io and self._cached_net_io:
+                net_dt = max(0.001, monotonic_s - self._last_net_sample_mono)
+                prev_errors = self._cached_net_io.errin + self._cached_net_io.errout
+                curr_errors = new_net_io.errin + new_net_io.errout
+                prev_drops = self._cached_net_io.dropin + self._cached_net_io.dropout
+                curr_drops = new_net_io.dropin + new_net_io.dropout
+                self._cached_net_rates = (
+                    max(0.0, (new_net_io.bytes_recv - self._cached_net_io.bytes_recv) / net_dt),
+                    max(0.0, (new_net_io.bytes_sent - self._cached_net_io.bytes_sent) / net_dt),
+                    max(0.0, (curr_errors - prev_errors) / net_dt),
+                    max(0.0, (curr_drops - prev_drops) / net_dt),
+                )
+            self._cached_net_io = new_net_io
+            self._last_net_sample_mono = monotonic_s
 
         ctx_switches_per_s: float | None = None
         interrupts_per_s: float | None = None
@@ -111,6 +139,11 @@ class Sampler:
         net_sent_bytes_per_s: float | None = None
         net_errors_per_s: float | None = None
         net_drops_per_s: float | None = None
+
+        if self._cached_net_rates is not None:
+            net_recv_bytes_per_s, net_sent_bytes_per_s, net_errors_per_s, net_drops_per_s = (
+                self._cached_net_rates
+            )
 
         if self._prev_monotonic_s is not None:
             dt = monotonic_s - self._prev_monotonic_s
@@ -142,28 +175,11 @@ class Sampler:
                             (curr_busy - prev_busy) / dt,
                         )
 
-                if curr_net_io and self._prev_net_io:
-                    net_recv_bytes_per_s = max(
-                        0.0,
-                        (curr_net_io.bytes_recv - self._prev_net_io.bytes_recv) / dt,
-                    )
-                    net_sent_bytes_per_s = max(
-                        0.0,
-                        (curr_net_io.bytes_sent - self._prev_net_io.bytes_sent) / dt,
-                    )
-                    prev_errors = self._prev_net_io.errin + self._prev_net_io.errout
-                    curr_errors = curr_net_io.errin + curr_net_io.errout
-                    net_errors_per_s = max(0.0, (curr_errors - prev_errors) / dt)
-
-                    prev_drops = self._prev_net_io.dropin + self._prev_net_io.dropout
-                    curr_drops = curr_net_io.dropin + curr_net_io.dropout
-                    net_drops_per_s = max(0.0, (curr_drops - prev_drops) / dt)
-
         # Update previous state
         self._prev_monotonic_s = monotonic_s
         self._prev_cpu_stats = curr_cpu_stats
         self._prev_disk_io = curr_disk_io
-        self._prev_net_io = curr_net_io
+        self._prev_net_io = self._cached_net_io
 
         # 4. Battery and Temperatures
         bat = self._adapter.battery()
@@ -241,14 +257,24 @@ class Sampler:
                     except Exception:
                         continue
 
-            # Sort descending by RSS memory
+            # Pass 1: Sort descending by RSS memory and retain top 25 processes only.
+            # Processes outside the top 25 are invisible to downstream features.
             processes.sort(key=lambda p: p.rss_bytes, reverse=True)
+            top_25 = processes[:25]
 
-            # Enrich top 10 processes with cached ownership check
-            for i in range(min(10, len(processes))):
-                p_sample = processes[i]
+            # Pass 2: compute cpu_percent and thread count only for top 25 by RSS
+            # and enrich with cached ownership per (pid, create_time).
+            for i in range(len(top_25)):
+                p_sample = top_25[i]
+                cpu_pct = p_sample.cpu_percent
+                threads = p_sample.num_threads
+                if snap is None:
+                    with contextlib.suppress(Exception):
+                        proc_obj = psutil.Process(p_sample.pid)
+                        cpu_pct = proc_obj.cpu_percent(interval=None)
+                        threads = proc_obj.num_threads()
+
                 full_protected = p_sample.is_protected
-
                 if not full_protected:
                     # Calculate or retrieve create_time for ownership cache
                     ctime = now_epoch - p_sample.age_s if p_sample.age_s > 0 else now_epoch
@@ -276,17 +302,17 @@ class Sampler:
                         protected_names=self._protected_names,
                     )
 
-                processes[i] = ProcessSample(
+                top_25[i] = ProcessSample(
                     pid=p_sample.pid,
                     name=p_sample.name,
                     rss_bytes=p_sample.rss_bytes,
-                    cpu_percent=p_sample.cpu_percent,
-                    num_threads=p_sample.num_threads,
+                    cpu_percent=cpu_pct,
+                    num_threads=threads,
                     age_s=p_sample.age_s,
                     is_protected=full_protected,
                 )
 
-            self._cached_processes = processes
+            self._cached_processes = top_25
             self._last_process_sample_mono = monotonic_s
         else:
             processes = self._cached_processes

@@ -12,7 +12,7 @@ offers safe fixes, and re-measures after a fix.
 It is also a college ML project: model training, offline evaluation, and live accuracy
 comparison are first-class features.
 
-Status: Early development (Phase 1 complete: telemetry collection, performance probe, storage scanning, and run recording).
+Status: Phase 3 complete (Feature Set v2, regression and classification models, anomaly detection, offline evaluation, and runtime artifacts).
 
 ## Installation
 
@@ -108,11 +108,47 @@ deskflow dataset validate dataset.parquet
 deskflow dataset merge machine1.parquet machine2.parquet --out combined.parquet
 ```
 
+### Machine Learning Model Training (`train`)
+
+Train regression, classification, and anomaly detection models on engineered datasets:
+
+```bash
+# Fast training mode skipping hyperparameter tuning
+deskflow train --dataset dataset.parquet --quick
+
+# Full GroupKFold hyperparameter tuning over parameter grids
+deskflow train --dataset dataset.parquet
+```
+
+### Model Evaluation & Diagnostic Reports (`evaluate`)
+
+Evaluate trained models on the test split with 300-sample block bootstrap intervals:
+
+```bash
+# Generate Markdown evaluation report
+deskflow evaluate --model-set latest --out report.md
+
+# Generate diagnostic PNG plots (requires 'train' extra: uv sync --extra train)
+deskflow evaluate --model-set latest --plots --out report.md
+```
+
+### Model Set Inspection (`models`)
+
+List and inspect serialized model sets and metadata cards:
+
+```bash
+# List all trained model sets
+deskflow models list
+
+# Inspect detailed model card, thresholds, and test performance
+deskflow models show latest
+```
+
 ## How it works
 
 1. The collector samples psutil telemetry on a short interval.
-2. The feature pipeline builds rolling-window vectors from raw samples.
-3. Regression models predict probe latency 30 seconds ahead.
+2. The feature pipeline builds rolling-window vectors (6s and 12s) from raw samples (Feature Set v2).
+3. Regression models predict probe latency 20 seconds ahead.
 4. A classifier tags the likely cause (cpu_pressure, memory_pressure, disk_pressure,
    background_load, or healthy).
 5. An Isolation Forest flags anomalies not seen during healthy training.

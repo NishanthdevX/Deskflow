@@ -1,6 +1,6 @@
 # Machine Learning Formulation and Design
 
-Deskflow anticipates system degradation and sluggishness before it impacts the user by predicting future probe latency 30 seconds ahead ($H = 30$ s).
+Deskflow anticipates system degradation and sluggishness before it impacts foreground user responsiveness by predicting normalized probe latency 20 seconds ahead ($H = 20$ s).
 
 ## 1. Problem Formulation
 
@@ -9,9 +9,10 @@ Conventional device-monitoring utilities trigger reactive alerts only after CPU 
 Deskflow formulates responsiveness prediction as:
 - **Primary Task**: Multi-horizon regression predicting normalized probe latency ratios $H$ seconds into the future:
   $$\text{target\_total\_ratio}_{t+H} = \frac{\text{total\_ns}_{t+H}}{\text{baseline\_total\_ns}}$$
-- **Secondary Classification**: Binary early-warning indicator `target_slow`:
-  $$\text{target\_slow}_{t+H} = \mathbb{I}(\text{target\_total\_ratio}_{t+H} \ge 1.5)$$
-- **Component Latency Decomposition**: Individual component regression for `target_cpu_ratio`, `target_mem_ratio`, and `target_disk_ratio` to support diagnostic attribution.
+- **Secondary Classification**: Multi-class attribution identifying the root operational issue at decision time $t$:
+  $$\text{issue\_now}_t \in \{\text{healthy}, \text{cpu\_pressure}, \text{memory\_pressure}, \text{disk\_pressure}, \text{background\_load}\}$$
+- **Anomaly Detection**: Unsupervised boundary estimation on healthy states to flag novel degradations and combined multi-fault conditions.
+- **Component Latency Decomposition**: Component regression for `target_cpu_ratio`, `target_mem_ratio`, and `target_disk_ratio` to support fine-grained attribution.
 
 ### Why a Measured Probe is the Ground Truth
 
@@ -20,185 +21,89 @@ Direct synthetic micro-workloads (120k LCG integer loops, 8 MiB strided memory a
 2. Probes execute deterministically on identical code paths across all runs, removing external application variance.
 3. Probes require no privileged OS APIs or invasive kernel drivers.
 
-## 2. Baseline Normalization
+## 2. Power-State Baseline Normalization
 
-Hardware clock rates, memory buses, and storage speeds vary widely across devices. Predicting raw millisecond latency would couple model outputs to processor speed rather than responsiveness degradation.
+Hardware clock rates, dynamic frequency scaling, and power-saving profiles differ drastically depending on whether a laptop is plugged into AC power or running on battery.
 
-Deskflow requires an initial idle calibration (`deskflow baseline calibrate`):
-1. The system records probe latency every 2 seconds while idle.
-2. The initial 3 warmup samples are discarded.
-3. If the coefficient of variation (CV) of total latency exceeds $0.5$, calibration is refused because the machine was active.
-4. Component and total medians are persisted to `<user_config_dir>/baseline.json`.
-5. All target metrics and probe features are divided by these calibrated baseline medians.
+Deskflow normalizes telemetry against state-aware baselines (`baseline.json`):
+1. Baselines are calibrated independently for `"ac"` and `"battery"` power states (`deskflow baseline calibrate`).
+2. Each training and test row dynamically selects the active baseline matching `battery_plugged` at time $t$ (`row_state = "battery" if not battery_plugged else "ac"`).
+3. The selected power state is recorded in the `baseline_state` dataset column.
+4. Component and total probe latencies are divided by the active baseline's calibrated medians.
 
-## 3. Feature Registry (FEATURE_SET_VERSION = 1)
+## 3. Feature Registry (FEATURE_SET_VERSION = 2)
 
-Features are extracted across multi-scale rolling temporal windows (10 s, 30 s, 60 s). Features are computed strictly from observations at or before decision time $t$ (strict no-lookahead guarantee).
+Feature Set v2 uses short rolling windows (6 s and 12 s only) with a 12 s warm-up requirement (`MIN_HISTORY_S = 12.0`). High-overhead network and interrupt counters are dropped, keeping at most 30 high-signal features in the canonical registry (currently 27 features):
 
 | Feature Name | Unit | Window | Description |
 | :--- | :--- | :--- | :--- |
-| `cpu_percent_mean_mean_10s` | % | 10s | Mean CPU utilization across 10s window |
-| `cpu_percent_mean_std_10s` | % | 10s | Standard deviation of CPU utilization across 10s window |
-| `cpu_percent_mean_max_10s` | % | 10s | Maximum CPU utilization across 10s window |
-| `cpu_percent_mean_slope_10s` | %/s | 10s | Least-squares slope of CPU utilization over 10s window |
-| `cpu_percent_mean_mean_30s` | % | 30s | Mean CPU utilization across 30s window |
-| `cpu_percent_mean_std_30s` | % | 30s | Standard deviation of CPU utilization across 30s window |
-| `cpu_percent_mean_max_30s` | % | 30s | Maximum CPU utilization across 30s window |
-| `cpu_percent_mean_slope_30s` | %/s | 30s | Least-squares slope of CPU utilization over 30s window |
-| `cpu_percent_mean_mean_60s` | % | 60s | Mean CPU utilization across 60s window |
-| `cpu_percent_mean_std_60s` | % | 60s | Standard deviation of CPU utilization across 60s window |
-| `cpu_percent_mean_max_60s` | % | 60s | Maximum CPU utilization across 60s window |
-| `cpu_percent_mean_slope_60s` | %/s | 60s | Least-squares slope of CPU utilization over 60s window |
-| `cpu_percent_max_core_mean_10s` | % | 10s | Mean single-core peak CPU utilization over 10s window |
-| `cpu_percent_max_core_mean_30s` | % | 30s | Mean single-core peak CPU utilization over 30s window |
-| `cpu_percent_max_core_mean_60s` | % | 60s | Mean single-core peak CPU utilization over 60s window |
-| `cpu_freq_ratio_mean_10s` | ratio | 10s | Mean CPU frequency ratio (current/max) over 10s window |
-| `cpu_freq_ratio_min_10s` | ratio | 10s | Minimum CPU frequency ratio over 10s window |
-| `cpu_freq_ratio_drop_10s` | ratio | 10s | Drop in CPU frequency ratio (max - last) over 10s window |
-| `cpu_freq_ratio_mean_30s` | ratio | 30s | Mean CPU frequency ratio (current/max) over 30s window |
-| `cpu_freq_ratio_min_30s` | ratio | 30s | Minimum CPU frequency ratio over 30s window |
-| `cpu_freq_ratio_drop_30s` | ratio | 30s | Drop in CPU frequency ratio (max - last) over 30s window |
-| `cpu_freq_ratio_mean_60s` | ratio | 60s | Mean CPU frequency ratio (current/max) over 60s window |
-| `cpu_freq_ratio_min_60s` | ratio | 60s | Minimum CPU frequency ratio over 60s window |
-| `cpu_freq_ratio_drop_60s` | ratio | 60s | Drop in CPU frequency ratio (max - last) over 60s window |
-| `mem_percent_last_10s` | % | 10s | Most recent virtual memory percent in 10s window |
-| `mem_percent_mean_10s` | % | 10s | Mean virtual memory percent over 10s window |
-| `mem_percent_slope_10s` | %/min | 10s | Least-squares memory percent slope (%/min) over 10s window |
-| `mem_percent_last_30s` | % | 30s | Most recent virtual memory percent in 30s window |
-| `mem_percent_mean_30s` | % | 30s | Mean virtual memory percent over 30s window |
-| `mem_percent_slope_30s` | %/min | 30s | Least-squares memory percent slope (%/min) over 30s window |
-| `mem_percent_last_60s` | % | 60s | Most recent virtual memory percent in 60s window |
-| `mem_percent_mean_60s` | % | 60s | Mean virtual memory percent over 60s window |
-| `mem_percent_slope_60s` | %/min | 60s | Least-squares memory percent slope (%/min) over 60s window |
-| `mem_available_gb_last_10s` | GB | 10s | Most recent available memory in GB in 10s window |
-| `mem_available_gb_slope_10s` | GB/min | 10s | Available memory rate of change (GB/min) over 10s window |
-| `mem_headroom_s_10s` | s | 10s | Estimated time to memory exhaustion capped at 3600s based on 10s window |
-| `mem_available_gb_last_30s` | GB | 30s | Most recent available memory in GB in 30s window |
-| `mem_available_gb_slope_30s` | GB/min | 30s | Available memory rate of change (GB/min) over 30s window |
-| `mem_headroom_s_30s` | s | 30s | Estimated time to memory exhaustion capped at 3600s based on 30s window |
-| `mem_available_gb_last_60s` | GB | 60s | Most recent available memory in GB in 60s window |
-| `mem_available_gb_slope_60s` | GB/min | 60s | Available memory rate of change (GB/min) over 60s window |
-| `mem_headroom_s_60s` | s | 60s | Estimated time to memory exhaustion capped at 3600s based on 60s window |
-| `swap_percent_last_10s` | % | 10s | Most recent swap utilization percent in 10s window |
-| `swap_percent_slope_10s` | %/min | 10s | Swap utilization slope (%/min) over 10s window |
-| `swap_percent_last_30s` | % | 30s | Most recent swap utilization percent in 30s window |
-| `swap_percent_slope_30s` | %/min | 30s | Swap utilization slope (%/min) over 30s window |
-| `swap_percent_last_60s` | % | 60s | Most recent swap utilization percent in 60s window |
-| `swap_percent_slope_60s` | %/min | 60s | Swap utilization slope (%/min) over 60s window |
-| `disk_read_mb_s_mean_10s` | MB/s | 10s | Mean disk read rate in MB/s over 10s window |
-| `disk_read_mb_s_max_10s` | MB/s | 10s | Maximum disk read rate in MB/s over 10s window |
-| `disk_write_mb_s_mean_10s` | MB/s | 10s | Mean disk write rate in MB/s over 10s window |
-| `disk_write_mb_s_max_10s` | MB/s | 10s | Maximum disk write rate in MB/s over 10s window |
-| `disk_busy_ms_per_s_mean_10s` | ms/s | 10s | Mean disk busy time ms/s over 10s window |
-| `disk_read_mb_s_mean_30s` | MB/s | 30s | Mean disk read rate in MB/s over 30s window |
-| `disk_read_mb_s_max_30s` | MB/s | 30s | Maximum disk read rate in MB/s over 30s window |
-| `disk_write_mb_s_mean_30s` | MB/s | 30s | Mean disk write rate in MB/s over 30s window |
-| `disk_write_mb_s_max_30s` | MB/s | 30s | Maximum disk write rate in MB/s over 30s window |
-| `disk_busy_ms_per_s_mean_30s` | ms/s | 30s | Mean disk busy time ms/s over 30s window |
-| `disk_read_mb_s_mean_60s` | MB/s | 60s | Mean disk read rate in MB/s over 60s window |
-| `disk_read_mb_s_max_60s` | MB/s | 60s | Maximum disk read rate in MB/s over 60s window |
-| `disk_write_mb_s_mean_60s` | MB/s | 60s | Mean disk write rate in MB/s over 60s window |
-| `disk_write_mb_s_max_60s` | MB/s | 60s | Maximum disk write rate in MB/s over 60s window |
-| `disk_busy_ms_per_s_mean_60s` | ms/s | 60s | Mean disk busy time ms/s over 60s window |
-| `net_errors_per_s_mean_10s` | err/s | 10s | Mean network packet error rate over 10s window |
-| `net_drops_per_s_mean_10s` | drop/s | 10s | Mean network packet drop rate over 10s window |
-| `net_errors_per_s_mean_30s` | err/s | 30s | Mean network packet error rate over 30s window |
-| `net_drops_per_s_mean_30s` | drop/s | 30s | Mean network packet drop rate over 30s window |
-| `net_errors_per_s_mean_60s` | err/s | 60s | Mean network packet error rate over 60s window |
-| `net_drops_per_s_mean_60s` | drop/s | 60s | Mean network packet drop rate over 60s window |
-| `process_count_last_10s` | count | 10s | Most recent process count in 10s window |
-| `process_count_slope_10s` | count/min | 10s | Process count slope over 10s window |
-| `thread_count_last_10s` | count | 10s | Most recent system thread count in 10s window |
-| `thread_count_slope_10s` | count/min | 10s | System thread count slope over 10s window |
-| `process_count_last_30s` | count | 30s | Most recent process count in 30s window |
-| `process_count_slope_30s` | count/min | 30s | Process count slope over 30s window |
-| `thread_count_last_30s` | count | 30s | Most recent system thread count in 30s window |
-| `thread_count_slope_30s` | count/min | 30s | System thread count slope over 30s window |
-| `process_count_last_60s` | count | 60s | Most recent process count in 60s window |
-| `process_count_slope_60s` | count/min | 60s | Process count slope over 60s window |
-| `thread_count_last_60s` | count | 60s | Most recent system thread count in 60s window |
-| `thread_count_slope_60s` | count/min | 60s | System thread count slope over 60s window |
-| `ctx_switches_per_s_mean_10s` | ctx/s | 10s | Mean context switches per second over 10s window |
-| `interrupts_per_s_mean_10s` | intr/s | 10s | Mean hardware interrupts per second over 10s window |
-| `ctx_switches_per_s_mean_30s` | ctx/s | 30s | Mean context switches per second over 30s window |
-| `interrupts_per_s_mean_30s` | intr/s | 30s | Mean hardware interrupts per second over 30s window |
-| `ctx_switches_per_s_mean_60s` | ctx/s | 60s | Mean context switches per second over 60s window |
-| `interrupts_per_s_mean_60s` | intr/s | 60s | Mean hardware interrupts per second over 60s window |
-| `battery_percent` | % | none | Current battery level percentage (NaN if no battery) |
-| `battery_plugged` | flag | none | Battery plugged in flag (1.0 = yes, 0.0 = no, NaN = unavailable) |
-| `top1_rss_share` | ratio | none | Largest single process RSS divided by total system RAM |
-| `idle_app_rss_gb` | GB | none | Total RSS in GB of non-protected idle apps (cpu < 1%, age > 600s) |
-| `idle_app_count` | count | none | Count of non-protected idle applications |
-| `busy_process_count` | count | none | Count of top processes with cpu_percent > 20% |
-| `top1_cpu_percent` | % | none | Peak CPU utilization percent among visible top processes |
-| `probe_cpu_ratio` | ratio | none | CPU probe latency divided by baseline CPU median at t |
-| `probe_mem_ratio` | ratio | none | Memory probe latency divided by baseline memory median at t |
-| `probe_disk_ratio` | ratio | none | Disk probe latency divided by baseline disk median at t |
-| `probe_total_ratio` | ratio | none | Total probe latency divided by baseline total median at t |
-| `probe_total_ratio_mean_30s` | ratio | 30s | Mean probe total ratio over 30s window |
-| `probe_total_ratio_max_30s` | ratio | 30s | Max probe total ratio over 30s window |
-| `probe_total_ratio_mean_60s` | ratio | 60s | Mean probe total ratio over 60s window |
-| `probe_total_ratio_max_60s` | ratio | 60s | Max probe total ratio over 60s window |
-| `probe_total_ratio_slope_60s` | ratio/min | 60s | Least-squares slope of probe total ratio over 60s window |
-| `slow_while_idle` | score | none | Throttling signature: max(0, probe_cpu_ratio - 1) * (1 - cpu_percent_mean_10s / 100) |
+| `cpu_percent_mean_mean_6s` | % | 6s | Mean CPU utilization across 6s window |
+| `cpu_percent_mean_mean_12s` | % | 12s | Mean CPU utilization across 12s window |
+| `cpu_percent_mean_max_12s` | % | 12s | Peak CPU utilization across 12s window |
+| `cpu_percent_mean_slope_12s` | %/s | 12s | Least-squares slope of CPU utilization over 12s window |
+| `cpu_freq_ratio_mean_12s` | ratio | 12s | Mean CPU frequency ratio (current/max) over 12s window |
+| `cpu_freq_ratio_min_12s` | ratio | 12s | Minimum CPU frequency ratio over 12s window |
+| `mem_percent_mean_12s` | % | 12s | Mean RAM utilization percentage over 12s window |
+| `mem_percent_slope_12s` | %/min | 12s | Least-squares RAM utilization slope (%/min) over 12s window |
+| `mem_available_bytes` | bytes | None | Instantaneous available physical memory headroom |
+| `swap_percent` | % | None | Instantaneous swap/pagefile utilization percent |
+| `disk_read_mb_s_mean_12s` | MB/s | 12s | Mean disk read throughput in MB/s over 12s window |
+| `disk_write_mb_s_mean_12s` | MB/s | 12s | Mean disk write throughput in MB/s over 12s window |
+| `ctx_switches_per_s_mean_12s` | ops/s | 12s | Mean context switch rate over 12s window |
+| `process_count` | count | None | System-wide total process count at time $t$ |
+| `thread_count` | count | None | System-wide total thread count at time $t$ |
+| `battery_plugged` | flag | None | External AC power indicator (1.0 = yes, 0.0 = no) |
+| `top1_rss_share` | ratio | None | Largest single process RSS divided by total system RAM |
+| `top1_cpu_percent` | % | None | Peak CPU utilization percent among top 25 processes |
+| `busy_process_count` | count | None | Count of top 25 processes with CPU > 20% |
+| `idle_app_rss_gb` | GB | None | Total RSS in GB of non-protected idle applications |
+| `idle_app_count` | count | None | Count of non-protected idle applications |
+| `probe_cpu_ratio` | ratio | None | CPU probe latency divided by baseline CPU median at $t$ |
+| `probe_mem_ratio` | ratio | None | Memory probe latency divided by baseline memory median at $t$ |
+| `probe_disk_ratio` | ratio | None | Disk probe latency divided by baseline disk median at $t$ |
+| `probe_total_ratio` | ratio | None | Total probe latency divided by baseline total median at $t$ |
+| `probe_total_ratio_mean_12s` | ratio | 12s | Mean probe total ratio over 12s window |
+| `slow_while_idle` | score | None | Throttling signature: $\max(0, \text{probe\_cpu\_ratio} - 1) \cdot (1 - \text{cpu\_mean}/100)$ |
 
-*Explicitly Excluded*: Hour of day, system uptime, and machine identity are deliberately excluded as features to prevent geographic and machine-specific shortcut learning.
+## 4. Model Architectures & Baselines
 
-## 4. Ground Truth Labeling Protocol
+All models utilize fixed `random_state = 42` and are trained strictly on training splits.
 
-The `issue_now` target column represents current ground-truth system state derived from sidecar metadata:
-- **`healthy`**: Applied during `idle` or `normal_use` runs, as well as during the pre-injection baseline phase and at least 20 seconds after stress injection ends.
-- **Specific Scenarios**: `cpu_pressure`, `memory_pressure`, `disk_pressure`, `background_load` applied between `inject_start + 10s` and `inject_end`.
-- **`transition`**: Applied during injection initiation (`[inject_start, inject_start + 10s)`) and injection cessation (`(inject_end, inject_end + 20s)`). By default, transition rows are dropped during dataset building (`--keep-transition` overrides this).
-- **`combo`**: Applied to compound injections (e.g. `cpu_pressure+memory_pressure`). Combos are reserved for evaluation and excluded from classifier training.
-- **Aborted Runs**: Any run marked `aborted` by the safety watchdog is excluded completely with an audit warning.
+### 4.1 Regression (`target_total_ratio`)
+- **Baselines**:
+  - `ConstantMedian`: Constant median of training target values.
+  - `Persistence`: Instantaneous `probe_total_ratio` at decision time $t$.
+  - `RollingMean`: 12s rolling mean `probe_total_ratio_mean_12s`.
+- **Machine Learning Models**:
+  - `Ridge`: Linear model with `SimpleImputer` and `StandardScaler`.
+  - `RandomForestRegressor`: At most 100 trees, max depth $\le 10$.
+  - `XGBRegressor`: At most 150 trees, max depth $\le 5$.
 
-## 5. Splitting and Leakage Controls
+### 4.2 Classification (`issue_now`)
+Targets: `healthy`, `cpu_pressure`, `memory_pressure`, `disk_pressure`, `background_load`. Combo and transition rows are excluded from classification training.
+- **Baseline**: `DummyClassifier(strategy="prior")`.
+- **Models**:
+  - `LogisticRegression`: Balanced class weighting with scaler pipeline.
+  - `RandomForestClassifier`: Balanced class weighting, small tree depth.
+  - `XGBClassifier`: Multi-class log-loss with native probability output.
 
-### No-Lookahead Guarantee
-All statistical features at decision point $t$ evaluate exclusively on records where `monotonic_s <= t`. This guarantee is enforced by filtering input series prior to feature aggregation and is validated by automated unit tests asserting equivalence between full-series and prefix-truncated calculations.
+### 4.3 Anomaly Detection
+- `IsolationForest`: 100 trees, `max_samples = 256` trained strictly on healthy training rows.
+- **Threshold**: Set to the 99th percentile of healthy training scores. Any sample with anomaly score $\ge \text{threshold}$ is flagged as anomalous.
 
-### Session-Level Partitioning
-Because sliding temporal windows (up to 60 seconds) overlap continuously, conventional random row splitting leaks historical state between training and evaluation partitions.
-- Datasets are partitioned at the whole-session level (`session_id`).
-- Sessions are ordered chronologically; newest whole sessions are assigned to `test` until reaching at least 20% of rows.
-- If only one session exists, Deskflow falls back to run-level splitting and issues a warning that results may be optimistic due to unvarying machine state.
+## 5. Evaluation Protocol & Transparency
 
-## 6. Known Limitations and Findings
+- **Tuning**: Tiny fixed hyperparameter grids ($\le 8$ combinations) using `GroupKFold(n_splits=4)` partitioned strictly by `run_id`.
+- **Test Set Isolation**: The test split is evaluated exactly once for final reporting.
+- **Block Bootstrap**: 300 resamples by `run_id` to establish 95% confidence intervals on MAE, $R^2$, macro F1, and improvement over Persistence. A model is declared "better than Persistence" only if its 95% bootstrap interval strictly excludes zero.
+- **Synthetic Data Transparency**: Any artifact or report derived from synthetic data carries the prominent banner `SYNTHETIC DATA - NOT A RESULT`.
 
-1. **Top-10 Process Visibility**: For performance reasons, process inspection during sampling tracks the top 10 processes by RSS. System-wide background metrics (`process_count`, `thread_count`, global CPU/memory) capture full OS state.
-2. **Background Load Probe Impact**: On high-memory systems, the `background_load` scenario holds memory and sleeps. While it increases memory residency and process count, it may not significantly degrade CPU probe latency unless memory reaches paging pressure. This is an authentic empirical finding regarding OS memory management rather than a defect.
-3. **Hardware Diversity**: Single-machine datasets exhibit specific CPU throttling curves and disk controller caching behaviors. Cross-machine validation via `deskflow dataset merge` is essential before deploying general models.
+## 6. Runtime Artifacts & Latency Budget
 
-## 7. Probe Noise Floor
-
-### Empirical Idle Probe Study
-To evaluate baseline measurement noise and establish a clean ground-truth signal, `scripts/probe_noise.py` executed three consecutive 120-second runs of idle probing at 2-second intervals (60 probes per run, 180 probes total) on a 16-logical-core Windows 11 system with background applications closed.
-
-#### Pre-Mitigation Benchmark Results (Single Execution)
-
-| Run | Probes | Median (ms) | CV | p95 / Median | Spikes > 1.5x Median |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| Run 1 | 60 | 51.59 | 0.403 | 2.08 | 15 / 60 (25.0%) |
-| Run 2 | 60 | 50.48 | 0.407 | 2.12 | 18 / 60 (30.0%) |
-| Run 3 | 60 | 51.88 | 0.393 | 2.08 | 11 / 60 (18.3%) |
-| **Overall** | **180** | **51.41** | **0.401** | **2.10** | **44 / 180 (24.4%)** |
-
-### Decision Rule and Analysis
-- **Decision Rule**: If the overall idle $p_{95}/\text{median}$ ratio exceeds 1.4, repeat probe filtering is required.
-- **Empirical Finding**: The observed ratio of 2.10 significantly exceeded 1.4. In 24.4% of idle observations, probe latency exceeded $1.5\times$ median. Because `target_slow` is defined as $\text{target\_total\_ratio}_{t+H} \ge 1.5$, this noise floor would cause the classifier to trigger on idle Windows scheduler jitter rather than true system sluggishness.
-- **Root Cause**: Transient context switches and thread preemption during micro-second CPU/memory loops inflate individual probe durations when run as single executions.
-
-### Mitigation Implementation
-1. **Multi-Repeat Micro-Workloads**:
-   - CPU and memory workloads execute `PROBE_REPEATS = 3` times per tick and record the minimum duration (`min(...)`). Taking the minimum across 3 short repeats filters out preemptive thread interrupts and transient scheduler delays.
-   - The disk probe remains single (1 MiB write + fsync) because filesystem sync is syscall-bound and repeated disk writes would induce write-amplification and disk thrashing.
-2. **Workload Sizing & Latency Budget**:
-   - `CPU_PROBE_ITERATIONS` was tuned to 60,000 (15-18 ms on a single core).
-   - Total probe duration with 3 repeats runs in ~22-25 ms median (peak under 35 ms), comfortably meeting the acceptance requirement of remaining under 80 ms.
-3. **Post-Mitigation Verification**:
-   - Post-mitigation verification demonstrated that CV fell from **0.401** to **0.142**, $p_{95}/\text{median}$ dropped from **2.10** to **1.31** (below the 1.4 threshold), and spurious spikes $>1.5\times$ median dropped from **24.4%** to **3.3%**.
-4. **Metadata Preservation**:
-   - `probe_repeats` and workload constants (`cpu_iterations`, `mem_bytes`, `mem_stride`, `disk_bytes`) are persisted in `baseline.json` and in lab sidecar metadata (`*.meta.json`) to guarantee dataset reproducibility.
-
-
+- **Storage Format**: Saved under `<user_data_dir>/models/<id>/`:
+  - Native XGBoost `.ubj` format for instant C++ deserialization.
+  - Pure JSON parameters for Ridge (enabling vector dot-product scoring without scikit-learn).
+  - Compressed joblib (`compress=3`) for RandomForest and IsolationForest.
+  - Total directory size $< 10$ MB.
+- **Inference Budget**: Sub-50ms inference across all models (`RuntimeModels.predict(features)`), achieving ~30ms on 100 consecutive calls.
+- **Attribution**: Native TreeSHAP feature contributions via `top_contributors(row, k=3)`, where contributions plus bias equal the raw model prediction.

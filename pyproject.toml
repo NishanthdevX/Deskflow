@@ -12,16 +12,20 @@ description = "Command-line device-care tool with ML-based performance predictio
 dependencies = [
     "psutil",
     "numpy",
-    "pandas",
     "scikit-learn",
     "xgboost",
-    "shap",
     "typer",
     "rich",
-    "textual",
     "joblib",
     "platformdirs",
+]
+
+[project.optional-dependencies]
+train = [
+    "pandas",
     "pyarrow",
+    "matplotlib",
+    "shap",
 ]
 
 [project.scripts]
@@ -73,7 +77,7 @@ mypy_path = "src"
 files = ["src"]
 # Modules that lack stubs and are not yet typed
 [[tool.mypy.overrides]]
-module = ["xgboost.*", "shap.*", "textual.*", "joblib.*"]
+module = ["xgboost.*", "shap.*", "textual.*", "joblib.*", "sklearn.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

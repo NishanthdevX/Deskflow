@@ -107,10 +107,7 @@ def collect_command(
             if elapsed >= duration:
                 break
 
-            # 1. Take telemetry sample
-            sample, processes = sampler.sample()
-
-            # 2. Check if probe is due (pausing storage scanner during execution)
+            # 1. Run probe first immediately upon waking to measure undisturbed state
             probe: ProbeResult | None = None
             if now_mono >= next_probe_mono:
                 if storage_scanner:
@@ -122,6 +119,9 @@ def collect_command(
                 # Advance next probe target
                 while next_probe_mono <= now_mono:
                     next_probe_mono += probe_interval
+
+            # 2. Take telemetry sample
+            sample, processes = sampler.sample()
 
             # 3. Storage snapshot from background scan (if enabled)
             storage_report = storage_scanner.get_cached_report() if storage_scanner else None

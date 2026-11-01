@@ -1,130 +1,102 @@
-"""Feature extraction, target alignment, and dataset row formulation."""
+"""Feature extraction engine: transforms raw telemetry and probes into ML features."""
 
-import logging
 import math
-from datetime import datetime
 from typing import Any
 
 import numpy as np
 
 from deskflow.baseline import Baseline
 from deskflow.collector.models import Record
-from deskflow.features.registry import (
-    SLOW_THRESHOLD,
-)
+from deskflow.features.registry import DEFAULT_HORIZON_S, MIN_HISTORY_S, SLOW_THRESHOLD
 from deskflow.features.window import (
-    compute_drop,
     compute_max,
     compute_mean,
     compute_min,
     compute_slope,
-    compute_std,
 )
-
-logger = logging.getLogger(__name__)
-
-
-def _parse_utc_iso(ts_str: str) -> float:
-    """Parse ISO UTC string to POSIX timestamp seconds."""
-    dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-    return dt.timestamp()
 
 
 def _estimate_sampling_interval(records: list[Record]) -> float:
-    """Estimate nominal telemetry interval in seconds from record deltas."""
+    """Estimate median sampling interval across records in seconds."""
     if len(records) < 2:
         return 2.0
-    deltas = [
-        records[i + 1].sample.monotonic_s - records[i].sample.monotonic_s
-        for i in range(min(50, len(records) - 1))
-    ]
-    med = float(np.median(deltas)) if deltas else 2.0
-    return max(0.5, med)
+    ts = [r.sample.monotonic_s for r in records]
+    diffs = np.diff(ts)
+    valid_diffs = diffs[diffs > 0.0]
+    if len(valid_diffs) == 0:
+        return 2.0
+    return float(np.median(valid_diffs))
 
 
 def _estimate_probe_interval(probe_records: list[Record]) -> float:
-    """Estimate nominal probe interval in seconds from probe record deltas."""
+    """Estimate median interval between probes in seconds."""
     if len(probe_records) < 2:
         return 4.0
-    deltas = [
-        probe_records[i + 1].sample.monotonic_s - probe_records[i].sample.monotonic_s
-        for i in range(min(20, len(probe_records) - 1))
-    ]
-    med = float(np.median(deltas)) if deltas else 4.0
-    return max(1.0, med)
+    ts = [r.sample.monotonic_s for r in probe_records]
+    diffs = np.diff(ts)
+    valid_diffs = diffs[diffs > 0.0]
+    if len(valid_diffs) == 0:
+        return 4.0
+    return float(np.median(valid_diffs))
 
 
-def determine_issue_label(
-    record: Record,
+def _resolve_issue_label(
+    label: str,
     meta: dict[str, Any] | None,
+    t: float,
+    inject_start_mono: float | None,
+    inject_end_mono: float | None,
+    keep_transition: bool = False,
 ) -> str | None:
-    """Determine ground truth label 'issue_now' for a record."""
-    raw_label = record.label
-
-    if raw_label in ("idle", "normal_use"):
-        return "healthy"
-
-    if meta is None:
-        if raw_label.startswith("lab:"):
-            parts = raw_label.split(":")
-            if len(parts) >= 2:
-                scen = parts[1]
-                if "+" in scen or scen == "combo":
-                    return "combo"
-                if scen in ("cpu_pressure", "memory_pressure", "disk_pressure", "background_load"):
-                    return scen
-                if scen == "idle":
-                    return "healthy"
-        return "healthy" if raw_label in ("unlabeled", "") else None
-
-    # Aborted runs are excluded
-    if meta.get("aborted"):
-        return None
-
-    actual = meta.get("actual", {})
-    inj_start_str = actual.get("inject_start")
-    inj_end_str = actual.get("inject_end")
-
-    if not inj_start_str or not inj_end_str:
-        return None
-
-    rec_time = _parse_utc_iso(record.sample.ts_utc)
-    inj_start = _parse_utc_iso(inj_start_str)
-    inj_end = _parse_utc_iso(inj_end_str)
-
-    scenario_name = str(meta.get("scenario", ""))
-
-    if rec_time < inj_start:
-        return "healthy"
-    if rec_time < inj_start + 10.0:
-        return "transition"
-    if rec_time <= inj_end:
-        if "+" in scenario_name or scenario_name == "combo":
-            return "combo"
-        if scenario_name in ("cpu_pressure", "memory_pressure", "disk_pressure", "background_load"):
-            return scenario_name
-        if scenario_name == "idle":
+    """Determine the ground-truth issue label for decision point t."""
+    if meta is not None and inject_start_mono is not None and inject_end_mono is not None:
+        scenario = str(meta.get("scenario", "healthy"))
+        if scenario == "idle":
+            scenario = "healthy"
+        if t < inject_start_mono:
             return "healthy"
-        return scenario_name
-    if rec_time < inj_end + 20.0:
-        return "transition"
-    return "healthy"
+        if t < inject_end_mono:
+            return "combo" if "+" in scenario else scenario
+        if t >= inject_end_mono + 10.0:
+            return "healthy"
+        return "transition" if keep_transition else None
+
+    if label.startswith("lab:"):
+        parts = label.split(":")
+        if len(parts) >= 2:
+            scen = parts[1]
+            if scen == "idle":
+                return "healthy"
+            return "combo" if "+" in scen else scen
+    if label == "idle":
+        return "healthy"
+    return label
 
 
 def extract_run_features(
     records: list[Record],
-    baseline: Baseline,
+    baseline: Baseline | dict[str, Baseline | None],
+    horizon_s: float = DEFAULT_HORIZON_S,
     meta: dict[str, Any] | None = None,
-    horizon_s: float = 30.0,
     keep_transition: bool = False,
     drop_stats: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     """Extract features, targets, and metadata rows from a single run series.
 
+    Feature Set v2: Windows are 6s and 12s only. MIN_HISTORY is 12s.
     Computes features exclusively from data at or before each decision point t (no lookahead).
     """
     if not records:
         return []
+
+    # Resolve per-state baselines mapping
+    if isinstance(baseline, Baseline):
+        baselines_by_state: dict[str, Baseline | None] = {
+            "ac": baseline,
+            "battery": baseline,
+        }
+    else:
+        baselines_by_state = dict(baseline)
 
     # Sort strictly by monotonic time
     records = sorted(records, key=lambda r: r.sample.monotonic_s)
@@ -144,26 +116,55 @@ def extract_run_features(
     # Pre-index probe monotonic timestamps
     probe_monos = np.array([r.sample.monotonic_s for r in probe_records])
 
-    for _i, cur_rec in enumerate(probe_records):
+    # Injection window detection if metadata timestamps are present
+    inject_start_mono: float | None = None
+    inject_end_mono: float | None = None
+    if meta is not None:
+        if meta.get("aborted"):
+            return []
+        if "actual" in meta:
+            actual = meta.get("actual") or {}
+            inj_s = actual.get("inject_start")
+            inj_e = actual.get("inject_end")
+            pre_s_str = actual.get("pre_start") or inj_s
+            if not (inj_s and inj_e and pre_s_str):
+                return []
+            from datetime import datetime
+
+            t0_epoch = datetime.fromisoformat(pre_s_str).timestamp()
+            t_inj_s_epoch = datetime.fromisoformat(inj_s).timestamp()
+            t_inj_e_epoch = datetime.fromisoformat(inj_e).timestamp()
+            inject_start_mono = run_start_mono + (t_inj_s_epoch - t0_epoch)
+            inject_end_mono = run_start_mono + (t_inj_e_epoch - t0_epoch)
+        elif "planned" in meta:
+            pre_s = float(meta["planned"].get("pre_s", 20.0))
+            hold_s = float(meta["planned"].get("hold_s", 90.0))
+            inject_start_mono = run_start_mono + pre_s
+            inject_end_mono = inject_start_mono + hold_s
+
+    for cur_rec in probe_records:
         t = cur_rec.sample.monotonic_s
 
-        # 1. Warm-up drop: require at least 60s of prior history
-        if t - run_start_mono < 60.0:
+        # 1. Warm-up drop: require at least MIN_HISTORY_S (12s) of prior history
+        if t - run_start_mono < MIN_HISTORY_S:
             if drop_stats is not None:
                 drop_stats["warm-up"] = drop_stats.get("warm-up", 0) + 1
             continue
 
-        # 2. Window isolation: strictly data at or before t
-        history_60s = [r for r in records if t - 60.0 <= r.sample.monotonic_s <= t]
-        if not history_60s:
+        # 2. Window isolation: strictly data at or before t (12s max window)
+        history_12s = [r for r in records if t - 12.0 <= r.sample.monotonic_s <= t]
+        if not history_12s:
             continue
 
-        # Check gap rule inside 60s window
+        # Check gap rule inside 12s window
         has_gap = False
-        for k in range(len(history_60s) - 1):
+        first_idx = records.index(history_12s[0])
+        records_to_check = [records[first_idx - 1]] + history_12s if first_idx > 0 else history_12s
+        for k in range(len(records_to_check) - 1):
             if (
-                history_60s[k + 1].sample.monotonic_s - history_60s[k].sample.monotonic_s
+                records_to_check[k + 1].sample.monotonic_s - records_to_check[k].sample.monotonic_s
                 > gap_limit
+                and records_to_check[k + 1].sample.monotonic_s > t - 12.0
             ):
                 has_gap = True
                 break
@@ -188,148 +189,102 @@ def extract_run_features(
                 drop_stats["no target probe"] = drop_stats.get("no target probe", 0) + 1
             continue
 
-        # 4. Issue label assignment
-        issue = determine_issue_label(cur_rec, meta)
-        if issue is None or (issue == "transition" and not keep_transition):
+        # 4. Resolve issue label
+        issue = _resolve_issue_label(
+            label=cur_rec.label,
+            meta=meta,
+            t=t,
+            inject_start_mono=inject_start_mono,
+            inject_end_mono=inject_end_mono,
+            keep_transition=keep_transition,
+        )
+        if issue is None:
             if drop_stats is not None:
-                drop_stats["unknown label"] = drop_stats.get("unknown label", 0) + 1
+                drop_stats["transition"] = drop_stats.get("transition", 0) + 1
             continue
 
-        # Extract features across 10s, 30s, 60s windows
-        history_30s = [r for r in history_60s if r.sample.monotonic_s >= t - 30.0]
-        history_10s = [r for r in history_60s if r.sample.monotonic_s >= t - 10.0]
-        window_map = {"10s": history_10s, "30s": history_30s, "60s": history_60s}
+        # 5. Determine active baseline by power state at time t
+        cur_bat_plugged = cur_rec.sample.battery_plugged
+        row_state = "battery" if (cur_bat_plugged is not None and not cur_bat_plugged) else "ac"
+        active_baseline = baselines_by_state.get(row_state)
+        if active_baseline is None:
+            # Fallback to 'ac' if only 'ac' exists on desktop systems without battery
+            active_baseline = baselines_by_state.get("ac")
+            if active_baseline is None:
+                raise ValueError(
+                    f"Missing baseline for power state '{row_state}'. "
+                    f"Run 'deskflow baseline calibrate' while on {row_state} power."
+                )
+
+        history_6s = [r for r in history_12s if r.sample.monotonic_s >= t - 6.0]
+        ts_12s = [r.sample.monotonic_s for r in history_12s]
 
         row: dict[str, Any] = {}
 
-        for w_name, w_recs in window_map.items():
-            ts_list = [r.sample.monotonic_s for r in w_recs]
+        # --- 1. CPU Features (6s and 12s) ---
+        cpu_means_6s = [r.sample.cpu_percent_mean for r in history_6s]
+        cpu_means_12s = [r.sample.cpu_percent_mean for r in history_12s]
+        row["cpu_percent_mean_mean_6s"] = compute_mean(cpu_means_6s)
+        row["cpu_percent_mean_mean_12s"] = compute_mean(cpu_means_12s)
+        row["cpu_percent_mean_max_12s"] = compute_max(cpu_means_12s)
+        row["cpu_percent_mean_slope_12s"] = compute_slope(ts_12s, cpu_means_12s)
 
-            # 1. CPU percent mean
-            cpu_means = [r.sample.cpu_percent_mean for r in w_recs]
-            row[f"cpu_percent_mean_mean_{w_name}"] = compute_mean(cpu_means)
-            row[f"cpu_percent_mean_std_{w_name}"] = compute_std(cpu_means)
-            row[f"cpu_percent_mean_max_{w_name}"] = compute_max(cpu_means)
-            row[f"cpu_percent_mean_slope_{w_name}"] = compute_slope(ts_list, cpu_means)
-
-            # 2. CPU max core
-            cpu_cores = [r.sample.cpu_percent_max_core for r in w_recs]
-            row[f"cpu_percent_max_core_mean_{w_name}"] = compute_mean(cpu_cores)
-
-            # 3. CPU freq ratio
-            freq_ratios: list[float] = []
-            for r in w_recs:
-                if (
-                    r.sample.cpu_freq_reliable
-                    and r.sample.cpu_freq_max_mhz
-                    and r.sample.cpu_freq_max_mhz > 0
-                    and r.sample.cpu_freq_current_mhz is not None
-                ):
-                    freq_ratios.append(r.sample.cpu_freq_current_mhz / r.sample.cpu_freq_max_mhz)
-                else:
-                    freq_ratios.append(float("nan"))
-
-            row[f"cpu_freq_ratio_mean_{w_name}"] = compute_mean(freq_ratios)
-            row[f"cpu_freq_ratio_min_{w_name}"] = compute_min(freq_ratios)
-            row[f"cpu_freq_ratio_drop_{w_name}"] = compute_drop(freq_ratios)
-
-            # 4. Memory percent
-            mem_pcts = [r.sample.mem_percent for r in w_recs]
-            row[f"mem_percent_last_{w_name}"] = mem_pcts[-1] if mem_pcts else float("nan")
-            row[f"mem_percent_mean_{w_name}"] = compute_mean(mem_pcts)
-            row[f"mem_percent_slope_{w_name}"] = compute_slope(ts_list, mem_pcts) * 60.0
-
-            # 5. Memory available GB
-            mem_gbs = [r.sample.mem_available_bytes / (1024**3) for r in w_recs]
-            last_gb = mem_gbs[-1] if mem_gbs else float("nan")
-            slope_gb_s = compute_slope(ts_list, mem_gbs)
-            row[f"mem_available_gb_last_{w_name}"] = last_gb
-            row[f"mem_available_gb_slope_{w_name}"] = slope_gb_s * 60.0
-
-            if not math.isnan(last_gb) and slope_gb_s < 0:
-                headroom = last_gb / max(-slope_gb_s, 1e-6)
+        # --- 2. CPU Frequency Ratios ---
+        freq_ratios: list[float] = []
+        for r in history_12s:
+            if (
+                r.sample.cpu_freq_reliable
+                and r.sample.cpu_freq_max_mhz
+                and r.sample.cpu_freq_max_mhz > 0
+                and r.sample.cpu_freq_current_mhz is not None
+            ):
+                freq_ratios.append(r.sample.cpu_freq_current_mhz / r.sample.cpu_freq_max_mhz)
             else:
-                headroom = 3600.0
-            row[f"mem_headroom_s_{w_name}"] = min(3600.0, max(0.0, headroom))
+                freq_ratios.append(float("nan"))
+        row["cpu_freq_ratio_mean_12s"] = compute_mean(freq_ratios)
+        row["cpu_freq_ratio_min_12s"] = compute_min(freq_ratios)
 
-            # 6. Swap percent
-            swap_pcts = [r.sample.swap_percent for r in w_recs]
-            row[f"swap_percent_last_{w_name}"] = swap_pcts[-1] if swap_pcts else float("nan")
-            row[f"swap_percent_slope_{w_name}"] = compute_slope(ts_list, swap_pcts) * 60.0
+        # --- 3. Memory Slope and Headroom ---
+        mem_pcts_12s = [r.sample.mem_percent for r in history_12s]
+        row["mem_percent_mean_12s"] = compute_mean(mem_pcts_12s)
+        row["mem_percent_slope_12s"] = compute_slope(ts_12s, mem_pcts_12s) * 60.0
+        row["mem_available_bytes"] = float(cur_rec.sample.mem_available_bytes)
 
-            # 7. Disk I/O
-            disk_reads = [
-                (r.sample.disk_read_bytes_per_s / (1024**2))
-                if r.sample.disk_read_bytes_per_s is not None
-                else 0.0
-                for r in w_recs
-            ]
-            row[f"disk_read_mb_s_mean_{w_name}"] = compute_mean(disk_reads)
-            row[f"disk_read_mb_s_max_{w_name}"] = compute_max(disk_reads)
+        # --- 4. Swap Utilization ---
+        row["swap_percent"] = float(cur_rec.sample.swap_percent)
 
-            disk_writes = [
-                (r.sample.disk_write_bytes_per_s / (1024**2))
-                if r.sample.disk_write_bytes_per_s is not None
-                else 0.0
-                for r in w_recs
-            ]
-            row[f"disk_write_mb_s_mean_{w_name}"] = compute_mean(disk_writes)
-            row[f"disk_write_mb_s_max_{w_name}"] = compute_max(disk_writes)
+        # --- 5. Disk Throughput ---
+        disk_reads = [
+            (r.sample.disk_read_bytes_per_s / (1024**2))
+            if r.sample.disk_read_bytes_per_s is not None
+            else 0.0
+            for r in history_12s
+        ]
+        disk_writes = [
+            (r.sample.disk_write_bytes_per_s / (1024**2))
+            if r.sample.disk_write_bytes_per_s is not None
+            else 0.0
+            for r in history_12s
+        ]
+        row["disk_read_mb_s_mean_12s"] = compute_mean(disk_reads)
+        row["disk_write_mb_s_mean_12s"] = compute_mean(disk_writes)
 
-            disk_busies = [
-                r.sample.disk_busy_ms_per_s
-                if r.sample.disk_busy_ms_per_s is not None
-                else float("nan")
-                for r in w_recs
-            ]
-            row[f"disk_busy_ms_per_s_mean_{w_name}"] = compute_mean(disk_busies)
+        # --- 6. Context Switches ---
+        ctx_list = [
+            r.sample.ctx_switches_per_s if r.sample.ctx_switches_per_s is not None else float("nan")
+            for r in history_12s
+        ]
+        row["ctx_switches_per_s_mean_12s"] = compute_mean(ctx_list)
 
-            # 8. Network errors and drops
-            net_errs = [
-                r.sample.net_errors_per_s if r.sample.net_errors_per_s is not None else 0.0
-                for r in w_recs
-            ]
-            row[f"net_errors_per_s_mean_{w_name}"] = compute_mean(net_errs)
-
-            net_drops = [
-                r.sample.net_drops_per_s if r.sample.net_drops_per_s is not None else 0.0
-                for r in w_recs
-            ]
-            row[f"net_drops_per_s_mean_{w_name}"] = compute_mean(net_drops)
-
-            # 9. Process and thread counts
-            p_counts = [float(r.sample.process_count) for r in w_recs]
-            row[f"process_count_last_{w_name}"] = p_counts[-1] if p_counts else float("nan")
-            row[f"process_count_slope_{w_name}"] = compute_slope(ts_list, p_counts) * 60.0
-
-            th_counts = [
-                float(r.sample.thread_count) if r.sample.thread_count is not None else float("nan")
-                for r in w_recs
-            ]
-            row[f"thread_count_last_{w_name}"] = th_counts[-1] if th_counts else float("nan")
-            row[f"thread_count_slope_{w_name}"] = compute_slope(ts_list, th_counts) * 60.0
-
-            # 10. Context switches and interrupts
-            ctx_list = [
-                r.sample.ctx_switches_per_s
-                if r.sample.ctx_switches_per_s is not None
-                else float("nan")
-                for r in w_recs
-            ]
-            row[f"ctx_switches_per_s_mean_{w_name}"] = compute_mean(ctx_list)
-
-            intr_list = [
-                r.sample.interrupts_per_s if r.sample.interrupts_per_s is not None else float("nan")
-                for r in w_recs
-            ]
-            row[f"interrupts_per_s_mean_{w_name}"] = compute_mean(intr_list)
-
-        # 11. Battery status at t
-        row["battery_percent"] = (
-            cur_rec.sample.battery_percent
-            if cur_rec.sample.battery_percent is not None
+        # --- 7. Process and Thread Counts ---
+        row["process_count"] = float(cur_rec.sample.process_count)
+        row["thread_count"] = (
+            float(cur_rec.sample.thread_count)
+            if cur_rec.sample.thread_count is not None
             else float("nan")
         )
+
+        # --- 8. Battery Plugged Status ---
         if cur_rec.sample.battery_plugged is True:
             row["battery_plugged"] = 1.0
         elif cur_rec.sample.battery_plugged is False:
@@ -337,7 +292,7 @@ def extract_run_features(
         else:
             row["battery_plugged"] = float("nan")
 
-        # 12. Top process metrics at t
+        # --- 9. Top-25 Process Metrics ---
         top_procs = cur_rec.top_processes
         tot_ram = cur_rec.sample.mem_total_bytes
         if top_procs and tot_ram > 0:
@@ -358,64 +313,56 @@ def extract_run_features(
         row["idle_app_rss_gb"] = sum(p.rss_bytes for p in idle_apps) / (1024**3)
         row["idle_app_count"] = float(len(idle_apps))
 
-        # 13. Probe ratios at t
+        # --- 10. Probe Ratios Relative to Active Baseline ---
         cur_probe = cur_rec.probe
-        assert cur_probe is not None  # probe_records filters for probe is not None
-        p_cpu_ratio = cur_probe.cpu_ns / max(1.0, baseline.cpu_ns)
-        p_mem_ratio = cur_probe.mem_ns / max(1.0, baseline.mem_ns)
-        p_disk_ratio = cur_probe.disk_ns / max(1.0, baseline.disk_ns)
-        p_tot_ratio = cur_probe.total_ns / max(1.0, baseline.total_ns)
+        assert cur_probe is not None
+        p_cpu_ratio = cur_probe.cpu_ns / max(1.0, active_baseline.cpu_ns)
+        p_mem_ratio = cur_probe.mem_ns / max(1.0, active_baseline.mem_ns)
+        p_disk_ratio = cur_probe.disk_ns / max(1.0, active_baseline.disk_ns)
+        p_tot_ratio = cur_probe.total_ns / max(1.0, active_baseline.total_ns)
 
         row["probe_cpu_ratio"] = p_cpu_ratio
         row["probe_mem_ratio"] = p_mem_ratio
         row["probe_disk_ratio"] = p_disk_ratio
         row["probe_total_ratio"] = p_tot_ratio
 
-        # Probe ratios in past 30s and 60s windows
-        probes_30s = [
-            r.probe.total_ns / max(1.0, baseline.total_ns)
-            for r in history_30s
+        probes_12s = [
+            r.probe.total_ns / max(1.0, active_baseline.total_ns)
+            for r in history_12s
             if r.probe is not None
         ]
-        row["probe_total_ratio_mean_30s"] = compute_mean(probes_30s)
-        row["probe_total_ratio_max_30s"] = compute_max(probes_30s)
+        row["probe_total_ratio_mean_12s"] = compute_mean(probes_12s)
 
-        probes_60s = [
-            r.probe.total_ns / max(1.0, baseline.total_ns)
-            for r in history_60s
-            if r.probe is not None
-        ]
-        ts_probes_60s = [r.sample.monotonic_s for r in history_60s if r.probe is not None]
-        row["probe_total_ratio_mean_60s"] = compute_mean(probes_60s)
-        row["probe_total_ratio_max_60s"] = compute_max(probes_60s)
-        row["probe_total_ratio_slope_60s"] = compute_slope(ts_probes_60s, probes_60s) * 60.0
-
-        # 14. Throttling signature
-        cpu_10s_mean = row["cpu_percent_mean_mean_10s"]
-        cpu_factor = 1.0 - (cpu_10s_mean / 100.0) if not math.isnan(cpu_10s_mean) else 1.0
+        # --- 11. Throttling Signature ---
+        cpu_mean = row["cpu_percent_mean_mean_12s"]
+        cpu_factor = 1.0 - (cpu_mean / 100.0) if not math.isnan(cpu_mean) else 1.0
         row["slow_while_idle"] = max(0.0, p_cpu_ratio - 1.0) * max(0.0, cpu_factor)
 
-        # 15. Targets
-        target_tot_ratio = target_probe.total_ns / max(1.0, baseline.total_ns)
+        # --- Targets at horizon_s ---
+        target_tot_ratio = target_probe.total_ns / max(1.0, active_baseline.total_ns)
         row["target_total_ratio"] = target_tot_ratio
-        row["target_cpu_ratio"] = target_probe.cpu_ns / max(1.0, baseline.cpu_ns)
-        row["target_mem_ratio"] = target_probe.mem_ns / max(1.0, baseline.mem_ns)
-        row["target_disk_ratio"] = target_probe.disk_ns / max(1.0, baseline.disk_ns)
+        row["target_cpu_ratio"] = target_probe.cpu_ns / max(1.0, active_baseline.cpu_ns)
+        row["target_mem_ratio"] = target_probe.mem_ns / max(1.0, active_baseline.mem_ns)
+        row["target_disk_ratio"] = target_probe.disk_ns / max(1.0, active_baseline.disk_ns)
+        # pyrefly: ignore[unnecessary-type-conversion]
         row["target_slow"] = bool(target_tot_ratio >= SLOW_THRESHOLD)
 
-        # 16. Label and metadata
+        # --- Metadata ---
         row["issue_now"] = issue
+        row["baseline_state"] = row_state
         row["run_id"] = cur_rec.run_id
         row["session_id"] = meta.get("session_id") if meta else f"day-{cur_rec.sample.ts_utc[:10]}"
         row["machine_id"] = (
-            meta.get("machine_id", baseline.machine_id) if meta else baseline.machine_id
+            meta.get("machine_id", active_baseline.machine_id)
+            if meta
+            else active_baseline.machine_id
         )
         row["scenario"] = meta.get("scenario", cur_rec.label) if meta else cur_rec.label
         row["intensity"] = meta.get("intensity", "none") if meta else "none"
         row["pattern"] = meta.get("pattern", "none") if meta else "none"
         row["ts_utc"] = cur_rec.sample.ts_utc
         row["horizon_s"] = float(horizon_s)
-        row["baseline_total_ms"] = baseline.total_ns / 1_000_000.0
+        row["baseline_total_ms"] = active_baseline.total_ns / 1_000_000.0
 
         rows.append(row)
 

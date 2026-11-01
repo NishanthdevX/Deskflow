@@ -12,10 +12,11 @@ if TYPE_CHECKING:
     pass
 
 from deskflow import __version__
-from deskflow.baseline import Baseline, load_baseline
+from deskflow.baseline import Baseline, load_all_baselines, load_baseline
 from deskflow.collector.recorder import load_run
 from deskflow.features.extract import extract_run_features
 from deskflow.features.registry import (
+    DEFAULT_HORIZON_S,
     FEATURE_NAMES,
     FEATURE_SET_VERSION,
 )
@@ -33,6 +34,7 @@ TARGET_COLUMNS = [
 
 METADATA_COLUMNS = [
     "issue_now",
+    "baseline_state",
     "run_id",
     "session_id",
     "machine_id",
@@ -109,9 +111,9 @@ def _compute_sha256(file_path: Path) -> str:
 
 def build_dataset(
     run_paths: list[Path],
-    baseline: Baseline | None = None,
+    baseline: Baseline | dict[str, Baseline | None] | None = None,
     baseline_path: Path | None = None,
-    horizon_s: float = 30.0,
+    horizon_s: float = DEFAULT_HORIZON_S,
     out_path: Path | None = None,
     keep_transition: bool = False,
 ) -> DatasetBuildResult:
@@ -121,7 +123,10 @@ def build_dataset(
         baseline = None
 
     if baseline is None:
-        baseline = load_baseline(path=baseline_path)
+        try:
+            baseline = load_all_baselines(path=baseline_path)
+        except Exception:
+            baseline = load_baseline(path=baseline_path)
 
     # Collect all jsonl files
     jsonl_files: list[Path] = []
@@ -231,6 +236,12 @@ def build_dataset(
     manifest_path = target_parquet.with_suffix(".manifest.json")
     sha256_hex = _compute_sha256(target_parquet)
 
+    b_summary = (
+        baseline.get("ac") or next((b for b in baseline.values() if b is not None), None)
+        if isinstance(baseline, dict)
+        else baseline
+    )
+
     manifest_dict = {
         "feature_set_version": FEATURE_SET_VERSION,
         "deskflow_version": __version__,
@@ -241,9 +252,9 @@ def build_dataset(
         "split_strategy": strategy,
         "source_run_ids": sorted(list(set(processed_run_ids))),
         "baseline_used": {
-            "machine_id": baseline.machine_id,
-            "created_utc": baseline.created_utc,
-            "total_ns": baseline.total_ns,
+            "machine_id": b_summary.machine_id if b_summary else "unknown",
+            "created_utc": b_summary.created_utc if b_summary else "",
+            "total_ns": b_summary.total_ns if b_summary else 0,
         },
         "build_utc": datetime.now(UTC).isoformat(),
         "sha256": sha256_hex,
