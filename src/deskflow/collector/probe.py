@@ -6,13 +6,15 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-import platformdirs
-
 from deskflow.collector.models import ProbeResult
+from deskflow.paths import get_data_dir
 
 # Fixed workload sizes
-# 120,000 iterations of linear congruential generator arithmetic (~10-20ms on modern CPU)
-CPU_PROBE_ITERATIONS: int = 120_000
+# Default 3 repeats for CPU and memory micro-workloads
+PROBE_REPEATS: int = 3
+
+# 60,000 iterations of linear congruential generator arithmetic (~15-18ms on modern CPU)
+CPU_PROBE_ITERATIONS: int = 60_000
 
 # 8 MiB memory allocation with 4096-byte stride writes (simulates paging/cache touch)
 MEM_PROBE_BYTES: int = 8 * 1024 * 1024
@@ -55,7 +57,7 @@ def probe_disk(data_dir: Path | None = None) -> int:
     if data_dir is not None:
         target_dir = data_dir
     else:
-        target_dir = Path(platformdirs.user_data_dir("deskflow", ensure_exists=True))
+        target_dir = get_data_dir()
 
     target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -80,15 +82,25 @@ def probe_disk(data_dir: Path | None = None) -> int:
             pass
 
 
-def run_probe(data_dir: Path | None = None) -> ProbeResult:
+def run_probe(
+    data_dir: Path | None = None,
+    repeats: int = PROBE_REPEATS,
+) -> ProbeResult:
     """Execute CPU, memory, and disk micro-workloads sequentially.
+
+    CPU and memory workloads run `repeats` times and take the minimum duration
+    to filter out transient scheduler noise. Disk stays single as it is syscall/I-O bound.
 
     Returns:
         ProbeResult with duration in nanoseconds for each component and total.
     """
     ts_utc = datetime.now(UTC).isoformat()
-    cpu_ns = probe_cpu()
-    mem_ns = probe_mem()
+    if repeats > 1:
+        cpu_ns = min(probe_cpu() for _ in range(repeats))
+        mem_ns = min(probe_mem() for _ in range(repeats))
+    else:
+        cpu_ns = probe_cpu()
+        mem_ns = probe_mem()
     disk_ns = probe_disk(data_dir=data_dir)
     total_ns = cpu_ns + mem_ns + disk_ns
 

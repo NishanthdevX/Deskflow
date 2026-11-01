@@ -7,7 +7,13 @@ from ctypes import wintypes
 
 import psutil
 
-from deskflow.platform.base import BatteryInfo, CacheLocation, CpuFreq, PlatformAdapter
+from deskflow.platform.base import (
+    BatteryInfo,
+    CacheLocation,
+    CpuFreq,
+    PlatformAdapter,
+    ProcessMeta,
+)
 
 _WINDOWS_PROTECTED_PROCESSES = frozenset(
     {
@@ -30,18 +36,145 @@ _WINDOWS_PROTECTED_PROCESSES = frozenset(
 )
 
 
-class THREADENTRY32(ctypes.Structure):
-    """Win32 thread entry structure."""
+class PERFORMANCE_INFORMATION(ctypes.Structure):
+    """Win32 performance information structure from psapi.h."""
 
     _fields_ = [
-        ("dwSize", wintypes.DWORD),
-        ("cntUsage", wintypes.DWORD),
-        ("th32ThreadID", wintypes.DWORD),
-        ("th32OwnerProcessID", wintypes.DWORD),
-        ("tpBasePri", wintypes.LONG),
-        ("tpDeltaPri", wintypes.LONG),
-        ("dwFlags", wintypes.DWORD),
+        ("cb", wintypes.DWORD),
+        ("CommitTotal", ctypes.c_size_t),
+        ("CommitLimit", ctypes.c_size_t),
+        ("CommitPeak", ctypes.c_size_t),
+        ("PhysicalTotal", ctypes.c_size_t),
+        ("PhysicalAvailable", ctypes.c_size_t),
+        ("SystemCache", ctypes.c_size_t),
+        ("KernelTotal", ctypes.c_size_t),
+        ("KernelPaged", ctypes.c_size_t),
+        ("KernelNonpaged", ctypes.c_size_t),
+        ("PageSize", ctypes.c_size_t),
+        ("HandleCount", wintypes.DWORD),
+        ("ProcessCount", wintypes.DWORD),
+        ("ThreadCount", wintypes.DWORD),
     ]
+
+
+class UNICODE_STRING(ctypes.Structure):
+    """Win32 Unicode string structure."""
+
+    _fields_ = [
+        ("Length", wintypes.USHORT),
+        ("MaximumLength", wintypes.USHORT),
+        ("Buffer", ctypes.c_wchar_p),
+    ]
+
+
+class SYSTEM_PROCESS_INFORMATION(ctypes.Structure):
+    """Win32 system process information structure for NtQuerySystemInformation."""
+
+    _fields_ = [
+        ("NextEntryOffset", wintypes.ULONG),
+        ("NumberOfThreads", wintypes.ULONG),
+        ("WorkingSetPrivateSize", ctypes.c_int64),
+        ("HardFaultCount", wintypes.ULONG),
+        ("NumberOfThreadsHighWatermark", wintypes.ULONG),
+        ("CycleTime", ctypes.c_uint64),
+        ("CreateTime", ctypes.c_int64),
+        ("UserTime", ctypes.c_int64),
+        ("KernelTime", ctypes.c_int64),
+        ("ImageName", UNICODE_STRING),
+        ("BasePriority", wintypes.LONG),
+        ("UniqueProcessId", ctypes.c_void_p),
+        ("InheritedFromUniqueProcessId", ctypes.c_void_p),
+        ("HandleCount", wintypes.ULONG),
+        ("SessionId", wintypes.ULONG),
+        ("UniqueProcessKey", ctypes.c_void_p),
+        ("PeakVirtualSize", ctypes.c_size_t),
+        ("VirtualSize", ctypes.c_size_t),
+        ("PageFaultCount", wintypes.ULONG),
+        ("PeakWorkingSetSize", ctypes.c_size_t),
+        ("WorkingSetSize", ctypes.c_size_t),
+    ]
+
+
+def _query_system_processes() -> list[ProcessMeta] | None:
+    """Fetch all running processes in a single NtQuerySystemInformation syscall (<5ms)."""
+    try:
+        buf_size = 2 * 1024 * 1024
+        buf = ctypes.create_string_buffer(buf_size)
+        ret_len = ctypes.c_ulong(0)
+        res = ctypes.windll.ntdll.NtQuerySystemInformation(5, buf, buf_size, ctypes.byref(ret_len))
+        if res != 0:
+            return None
+        offset = 0
+        entries: list[ProcessMeta] = []
+        while True:
+            p = SYSTEM_PROCESS_INFORMATION.from_buffer(buf, offset)
+            pid = int(p.UniqueProcessId or 0)
+            name = str(p.ImageName.Buffer or "")
+            ctime_raw = int(p.CreateTime)
+            ctime_epoch = (
+                max(0.0, (ctime_raw - 116444736000000000) / 10000000.0)
+                if ctime_raw > 116444736000000000
+                else 0.0
+            )
+            entries.append(
+                ProcessMeta(
+                    pid=pid,
+                    name=name,
+                    rss_bytes=int(p.WorkingSetSize),
+                    num_threads=int(p.NumberOfThreads),
+                    create_time_s=ctime_epoch,
+                )
+            )
+            if p.NextEntryOffset == 0:
+                break
+            offset += p.NextEntryOffset
+        return entries
+    except Exception:
+        return None
+
+
+def _get_performance_info() -> PERFORMANCE_INFORMATION | None:
+    """Fetch system-wide performance info using psapi.GetPerformanceInfo."""
+    try:
+        pi = PERFORMANCE_INFORMATION()
+        pi.cb = ctypes.sizeof(PERFORMANCE_INFORMATION)
+        if ctypes.windll.psapi.GetPerformanceInfo(ctypes.byref(pi), pi.cb):
+            return pi
+    except Exception:
+        pass
+    return None
+
+
+class MEMORYSTATUSEX(ctypes.Structure):
+    """Win32 memory status structure."""
+
+    _fields_ = [
+        ("dwLength", wintypes.DWORD),
+        ("dwMemoryLoad", wintypes.DWORD),
+        ("ullTotalPhys", ctypes.c_uint64),
+        ("ullAvailPhys", ctypes.c_uint64),
+        ("ullTotalPageFile", ctypes.c_uint64),
+        ("ullAvailPageFile", ctypes.c_uint64),
+        ("ullTotalVirtual", ctypes.c_uint64),
+        ("ullAvailVirtual", ctypes.c_uint64),
+        ("ullAvailExtendedVirtual", ctypes.c_uint64),
+    ]
+
+
+def _get_swap_status() -> tuple[int, float] | None:
+    """Fetch swap/pagefile used bytes and percentage via GlobalMemoryStatusEx (<0.01ms)."""
+    try:
+        ms = MEMORYSTATUSEX()
+        ms.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(ms)):
+            total = ms.ullTotalPageFile
+            avail = ms.ullAvailPageFile
+            used = total - avail
+            pct = (used / total) * 100.0 if total > 0 else 0.0
+            return int(used), float(pct)
+    except Exception:
+        pass
+    return None
 
 
 class WindowsAdapter(PlatformAdapter):
@@ -139,21 +272,20 @@ class WindowsAdapter(PlatformAdapter):
         """Protected Windows processes."""
         return _WINDOWS_PROTECTED_PROCESSES
 
+    def process_count(self) -> int | None:
+        """Total system process count via GetPerformanceInfo."""
+        pi = _get_performance_info()
+        return int(pi.ProcessCount) if pi is not None else None
+
     def thread_count(self) -> int | None:
-        """Fast enumeration of total system threads via ToolHelp snapshot."""
-        try:
-            # TH32CS_SNAPTHREAD = 0x00000004
-            h_snap = ctypes.windll.kernel32.CreateToolhelp32Snapshot(0x00000004, 0)
-            if h_snap == -1:
-                return None
-            te = THREADENTRY32()
-            te.dwSize = ctypes.sizeof(THREADENTRY32)
-            count = 0
-            if ctypes.windll.kernel32.Thread32First(h_snap, ctypes.byref(te)):
-                count += 1
-                while ctypes.windll.kernel32.Thread32Next(h_snap, ctypes.byref(te)):
-                    count += 1
-            ctypes.windll.kernel32.CloseHandle(h_snap)
-            return count
-        except Exception:
-            return None
+        """Total system thread count via GetPerformanceInfo."""
+        pi = _get_performance_info()
+        return int(pi.ThreadCount) if pi is not None else None
+
+    def process_snapshot(self) -> list[ProcessMeta] | None:
+        """Low-overhead process snapshot via NtQuerySystemInformation."""
+        return _query_system_processes()
+
+    def swap_memory(self) -> tuple[int, float] | None:
+        """Low-overhead swap/pagefile status via GlobalMemoryStatusEx."""
+        return _get_swap_status()

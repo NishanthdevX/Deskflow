@@ -117,6 +117,7 @@ def extract_run_features(
     meta: dict[str, Any] | None = None,
     horizon_s: float = 30.0,
     keep_transition: bool = False,
+    drop_stats: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     """Extract features, targets, and metadata rows from a single run series.
 
@@ -148,6 +149,8 @@ def extract_run_features(
 
         # 1. Warm-up drop: require at least 60s of prior history
         if t - run_start_mono < 60.0:
+            if drop_stats is not None:
+                drop_stats["warm-up"] = drop_stats.get("warm-up", 0) + 1
             continue
 
         # 2. Window isolation: strictly data at or before t
@@ -165,6 +168,8 @@ def extract_run_features(
                 has_gap = True
                 break
         if has_gap:
+            if drop_stats is not None:
+                drop_stats["gap"] = drop_stats.get("gap", 0) + 1
             continue
 
         # 3. Target alignment at t + horizon_s
@@ -172,19 +177,22 @@ def extract_run_features(
         diffs = np.abs(probe_monos - target_t)
         best_idx = int(np.argmin(diffs))
         if diffs[best_idx] > target_tolerance:
-            # No matching probe within tolerance horizon
+            if drop_stats is not None:
+                drop_stats["no target probe"] = drop_stats.get("no target probe", 0) + 1
             continue
 
         target_rec = probe_records[best_idx]
         target_probe = target_rec.probe
         if target_probe is None:
+            if drop_stats is not None:
+                drop_stats["no target probe"] = drop_stats.get("no target probe", 0) + 1
             continue
 
         # 4. Issue label assignment
         issue = determine_issue_label(cur_rec, meta)
-        if issue is None:
-            continue
-        if issue == "transition" and not keep_transition:
+        if issue is None or (issue == "transition" and not keep_transition):
+            if drop_stats is not None:
+                drop_stats["unknown label"] = drop_stats.get("unknown label", 0) + 1
             continue
 
         # Extract features across 10s, 30s, 60s windows
@@ -294,7 +302,10 @@ def extract_run_features(
             row[f"process_count_last_{w_name}"] = p_counts[-1] if p_counts else float("nan")
             row[f"process_count_slope_{w_name}"] = compute_slope(ts_list, p_counts) * 60.0
 
-            th_counts = [float(r.sample.thread_count) for r in w_recs]
+            th_counts = [
+                float(r.sample.thread_count) if r.sample.thread_count is not None else float("nan")
+                for r in w_recs
+            ]
             row[f"thread_count_last_{w_name}"] = th_counts[-1] if th_counts else float("nan")
             row[f"thread_count_slope_{w_name}"] = compute_slope(ts_list, th_counts) * 60.0
 

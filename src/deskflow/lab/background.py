@@ -24,8 +24,10 @@ class BackgroundLoadScenario(Scenario):
         self,
         intensity: Intensity = "medium",
         pattern: Pattern = "constant",
+        worker_count_override: int | None = None,
     ) -> None:
         super().__init__(intensity=intensity, pattern=pattern)
+        self.worker_count_override = worker_count_override
         self._processes: list[subprocess.Popen[Any]] = []
         self._target_proc_count = 0
         self._mib_per_proc = 0
@@ -36,6 +38,9 @@ class BackgroundLoadScenario(Scenario):
 
     def _calculate_plan(self) -> tuple[int, int]:
         """Return (proc_count, mib_per_proc) scaled to respect safety floor."""
+        if self.worker_count_override is not None:
+            return (self.worker_count_override, 10)
+
         if self.intensity == "low":
             count, mib = 10, 50
         elif self.intensity == "medium":

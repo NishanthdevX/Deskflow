@@ -24,6 +24,20 @@ def get_memory_floor_bytes() -> int:
         return MEM_FLOOR_MIN_BYTES
 
 
+def calculate_safe_memory_budget(intensity: Intensity = "medium") -> int:
+    """Calculate safe allocatable memory bytes respecting safety floor."""
+    vm = psutil.virtual_memory()
+    floor = get_memory_floor_bytes()
+    avail = vm.available
+    fraction = 0.25 if intensity == "low" else (0.50 if intensity == "medium" else 0.70)
+    target = int(avail * fraction)
+    if avail - target < floor:
+        target = max(0, avail - floor)
+    chunk = 64 * 1024 * 1024
+    target = (target // chunk) * chunk
+    return max(chunk, target)
+
+
 @dataclass
 class ScenarioStats:
     """Telemetry report of allocated resources during an injection run."""
@@ -62,4 +76,3 @@ class Scenario(ABC):
     def is_running(self) -> bool:
         """Return whether scenario is actively injecting stress."""
         return self._is_running
-

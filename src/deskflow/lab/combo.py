@@ -40,4 +40,3 @@ class ComboScenario(Scenario):
         workers = sum(s.get_stats().worker_count for s in self.sub_scenarios)
         alloc_bytes = sum(s.get_stats().bytes_allocated for s in self.sub_scenarios)
         return ScenarioStats(worker_count=workers, bytes_allocated=alloc_bytes)
-

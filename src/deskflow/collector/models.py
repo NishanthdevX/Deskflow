@@ -32,7 +32,7 @@ class SystemSample:
     net_errors_per_s: float | None
     net_drops_per_s: float | None
     process_count: int
-    thread_count: int
+    thread_count: int | None
     battery_percent: float | None
     battery_plugged: bool | None
     max_temperature_c: float | None

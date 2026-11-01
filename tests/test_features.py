@@ -427,3 +427,230 @@ def test_dataset_build_validate_describe_e2e(tmp_path: Path) -> None:
     assert summary["total_rows"] > 0
     assert summary["train_rows"] + summary["test_rows"] == summary["total_rows"]
     assert "test-session" in summary["sessions"]
+
+
+def test_synthetic_45s_run_yields_zero_rows() -> None:
+    """Verify that a run shorter than the 60s warm-up window yields zero rows."""
+    baseline = _make_dummy_baseline()
+    records: list[Record] = []
+
+    # Run spanning 45 seconds total (0s to 44s, every 2s)
+    for sec in range(0, 45, 2):
+        mono = float(sec)
+        dt_str = datetime.fromtimestamp(1700000000 + sec, tz=UTC).isoformat()
+        sample = _make_sample(mono=mono, ts_utc=dt_str)
+        probe = None
+        if sec % 4 == 0:
+            probe = ProbeResult(
+                ts_utc=dt_str,
+                cpu_ns=20_000_000,
+                mem_ns=2_000_000,
+                disk_ns=5_000_000,
+                total_ns=27_000_000,
+            )
+        rec = Record(
+            schema_version=1,
+            run_id="run-45s",
+            label="idle",
+            sample=sample,
+            probe=probe,
+            top_processes=[],
+            storage=None,
+        )
+        records.append(rec)
+
+    drop_stats: dict[str, int] = {}
+    rows = extract_run_features(
+        records,
+        baseline=baseline,
+        horizon_s=30.0,
+        drop_stats=drop_stats,
+    )
+
+    # Must yield exactly 0 rows because t - start < 60s for all t in [0, 44]
+    assert len(rows) == 0
+    assert drop_stats.get("warm-up") == sum(1 for r in records if r.probe is not None)
+
+
+def test_window_math_edge_cases() -> None:
+    """Verify window functions handle empty, NaN-only, single-element, and zero-variance series."""
+    import math
+
+    # Empty inputs
+    assert math.isnan(compute_mean([]))
+    assert math.isnan(compute_std([]))
+    assert math.isnan(compute_max([]))
+    assert math.isnan(compute_min([]))
+    assert math.isnan(compute_drop([]))
+    assert compute_slope([], []) == 0.0
+
+    # NaN-only inputs
+    nans = [float("nan"), float("nan")]
+    assert math.isnan(compute_mean(nans))
+    assert compute_std(nans) == 0.0
+    assert math.isnan(compute_max(nans))
+    assert math.isnan(compute_min(nans))
+    assert math.isnan(compute_drop(nans))
+
+    # Single element
+    single = [42.0]
+    assert compute_mean(single) == 42.0
+    assert compute_std(single) == 0.0
+    assert compute_max(single) == 42.0
+    assert compute_min(single) == 42.0
+    assert compute_drop(single) == 0.0
+
+    # Slope with zero timestamp variance or mismatched lengths
+    assert compute_slope([1.0], [2.0]) == 0.0
+    assert compute_slope([1.0, 1.0], [2.0, 4.0]) == 0.0
+    assert compute_slope([1.0, 2.0], [float("nan"), 4.0]) == 0.0
+    assert compute_slope([1.0, 2.0, 3.0], [2.0, 4.0]) == 0.0
+
+
+def test_merge_datasets_and_validation(tmp_path: Path) -> None:
+    """Verify merging multiple parquet datasets and validating schema requirements."""
+    from deskflow.features.builder import merge_datasets
+
+    # Create dummy parquet datasets with required columns
+    df1 = pd.DataFrame({f: [1.0, 2.0] for f in FEATURE_NAMES})
+    df1["target_total_ratio"] = [1.0, 1.2]
+    df1["target_cpu_ratio"] = [1.0, 1.1]
+    df1["target_mem_ratio"] = [1.0, 1.0]
+    df1["target_disk_ratio"] = [1.0, 1.0]
+    df1["target_slow"] = [0, 0]
+    df1["issue_now"] = ["healthy", "healthy"]
+    df1["run_id"] = ["run-1", "run-1"]
+    df1["session_id"] = ["sess-1", "sess-1"]
+    df1["machine_id"] = ["mach-1", "mach-1"]
+    df1["scenario"] = ["idle", "idle"]
+    df1["intensity"] = ["low", "low"]
+    df1["pattern"] = ["constant", "constant"]
+    df1["ts_utc"] = ["2026-11-01T12:00:00Z", "2026-11-01T12:00:02Z"]
+    df1["horizon_s"] = [30.0, 30.0]
+    df1["baseline_total_ms"] = [25.0, 25.0]
+    df1["split"] = ["train", "test"]
+
+    p1 = tmp_path / "ds1.parquet"
+    df1.to_parquet(p1, index=False)
+
+    df2 = df1.copy()
+    df2["machine_id"] = ["mach-2", "mach-2"]
+    df2["run_id"] = ["run-2", "run-2"]
+    p2 = tmp_path / "ds2.parquet"
+    df2.to_parquet(p2, index=False)
+
+    merged_parquet, manifest_path = merge_datasets([p1, p2], out_path=tmp_path / "merged.parquet")
+    assert merged_parquet.exists()
+    assert manifest_path.exists()
+
+    # Validating the merged parquet
+    errs = validate_dataset(merged_parquet)
+    assert not errs
+
+    # Mismatched horizon raises ValueError
+    df3 = df1.copy()
+    df3["horizon_s"] = [60.0, 60.0]
+    p3 = tmp_path / "ds3.parquet"
+    df3.to_parquet(p3, index=False)
+    with pytest.raises(ValueError, match="differing horizons"):
+        merge_datasets([p1, p3], out_path=tmp_path / "err.parquet")
+
+
+def test_extract_features_label_and_edge_cases() -> None:
+    """Verify label resolution without meta, aborted runs, and empty runs in feature extraction."""
+    baseline = _make_dummy_baseline()
+
+    # 1. Empty records
+    assert extract_run_features([], baseline) == []
+
+    # 2. Records without any probe
+    base_epoch = 1700000000.0
+    no_probe_records = [
+        Record(
+            schema_version=1,
+            run_id="noprobe",
+            label="idle",
+            sample=_make_sample(
+                mono=float(s), ts_utc=datetime.fromtimestamp(base_epoch + s, tz=UTC).isoformat()
+            ),
+            probe=None,
+            top_processes=[],
+            storage=None,
+        )
+        for s in range(0, 100, 2)
+    ]
+    assert extract_run_features(no_probe_records, baseline) == []
+
+    # 3. 120s records with probes every 4s
+    probe_records = []
+    for s in range(0, 120, 2):
+        dt_str = datetime.fromtimestamp(base_epoch + s, tz=UTC).isoformat()
+        probe = (
+            ProbeResult(ts_utc=dt_str, cpu_ns=20e6, mem_ns=2e6, disk_ns=5e6, total_ns=27e6)
+            if s % 4 == 0
+            else None
+        )
+        rec = Record(
+            schema_version=1,
+            run_id="r1",
+            label="lab:cpu_pressure:low:constant",
+            sample=_make_sample(mono=float(s), ts_utc=dt_str),
+            probe=probe,
+            top_processes=[],
+            storage=None,
+        )
+        probe_records.append(rec)
+
+    # 4. Meta is None with lab:cpu_pressure label
+    rows_no_meta = extract_run_features(probe_records, baseline, meta=None, horizon_s=30.0)
+    assert len(rows_no_meta) > 0
+    assert rows_no_meta[0]["issue_now"] == "cpu_pressure"
+
+    # 5. Meta is None with lab:combo label
+    from dataclasses import replace
+
+    combo_records = [
+        replace(r, label="lab:cpu_pressure+memory_pressure:high:constant") for r in probe_records
+    ]
+    rows_combo = extract_run_features(combo_records, baseline, meta=None, horizon_s=30.0)
+    assert len(rows_combo) > 0
+    assert rows_combo[0]["issue_now"] == "combo"
+
+    # 6. Meta is None with lab:idle label
+    idle_records = [replace(r, label="lab:idle:low:constant") for r in probe_records]
+    rows_idle = extract_run_features(idle_records, baseline, meta=None, horizon_s=30.0)
+    assert len(rows_idle) > 0
+    assert rows_idle[0]["issue_now"] == "healthy"
+
+    # 7. Aborted meta returns empty
+    aborted_meta = {"aborted": True}
+    assert extract_run_features(probe_records, baseline, meta=aborted_meta) == []
+
+    # 8. Missing actual inject timestamps returns empty
+    incomplete_meta = {"aborted": False, "actual": {}}
+    assert extract_run_features(probe_records, baseline, meta=incomplete_meta) == []
+
+
+def test_validate_dataset_errors(tmp_path: Path) -> None:
+    """Verify validate_dataset catches corrupted files, missing columns, and duplicates."""
+    # Corrupt file
+    corrupt = tmp_path / "corrupt.parquet"
+    corrupt.write_text("not a parquet")
+    errs = validate_dataset(corrupt)
+    assert len(errs) >= 1
+    assert "Failed to read" in errs[0]
+
+    # Missing targets and duplicates
+    df = pd.DataFrame(
+        {
+            "run_id": ["r1", "r1"],
+            "ts_utc": ["2026-11-01T12:00:00Z", "2026-11-01T12:00:00Z"],
+            "split": ["train", "train"],
+        }
+    )
+    p = tmp_path / "missing_cols.parquet"
+    df.to_parquet(p)
+    errs2 = validate_dataset(p)
+    assert any("Missing required feature column" in e for e in errs2)
+    assert any("Missing target column" in e for e in errs2)
+    assert any("duplicate" in e for e in errs2)

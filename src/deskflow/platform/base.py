@@ -31,6 +31,17 @@ class CacheLocation:
     safe_to_clean: bool
 
 
+@dataclass(frozen=True)
+class ProcessMeta:
+    """Lightweight process metadata snapshot."""
+
+    pid: int
+    name: str
+    rss_bytes: int
+    num_threads: int
+    create_time_s: float = 0.0
+
+
 class PlatformAdapter(ABC):
     """Abstract interface for platform-specific capabilities."""
 
@@ -59,6 +70,18 @@ class PlatformAdapter(ABC):
     def protected_process_names(self) -> frozenset[str]:
         """Return the set of lowercased process names that must never be terminated."""
 
+    def process_count(self) -> int | None:
+        """Return total active process count across the system, or None if unavailable."""
+        return None
+
     def thread_count(self) -> int | None:
         """Return total active thread count across the system, or None if unavailable."""
+        return None
+
+    def swap_memory(self) -> tuple[int, float] | None:
+        """Return (swap_used_bytes, swap_percent) or None if unavailable/unsupported."""
+        return None
+
+    def process_snapshot(self) -> list[ProcessMeta] | None:
+        """Return low-overhead system process snapshot, or None if unavailable."""
         return None

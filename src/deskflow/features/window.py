@@ -79,4 +79,3 @@ def compute_slope(timestamps: list[float], values: list[float]) -> float:
         return 0.0
 
     return float(numerator / denominator)
-

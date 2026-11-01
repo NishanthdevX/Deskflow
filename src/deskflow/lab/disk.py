@@ -1,5 +1,6 @@
 """Disk pressure injection scenario."""
 
+import contextlib
 import multiprocessing as mp
 import os
 import shutil
@@ -132,15 +133,15 @@ class DiskPressureScenario(Scenario):
 
     def start(self, hold_duration_s: float = 180.0) -> None:
         # Pre-check free disk space
-        try:
+        free_disk: int | None = None
+        with contextlib.suppress(OSError):
             free_disk = shutil.disk_usage(self.scratch_dir).free
-            if free_disk < DISK_MIN_FREE_BYTES:
-                raise RuntimeError(
-                    f"Insufficient free disk space ({free_disk / (1024**3):.2f} GB) "
-                    f"to start disk pressure lab."
-                )
-        except Exception:
-            pass
+
+        if free_disk is not None and free_disk < DISK_MIN_FREE_BYTES:
+            raise RuntimeError(
+                f"Insufficient free disk space ({free_disk / (1024**3):.2f} GB) "
+                f"to start disk pressure lab."
+            )
 
         self._writer_count = self._calculate_writers()
         ctx = mp.get_context("spawn")

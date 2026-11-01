@@ -17,15 +17,22 @@ from deskflow.safety import _get_current_username, _get_parent_pids, is_protecte
 class Sampler:
     """Samples hardware telemetry, system metrics, and running processes."""
 
-    def __init__(self, adapter: PlatformAdapter, interval_s: float = 1.0) -> None:
+    def __init__(
+        self,
+        adapter: PlatformAdapter,
+        interval_s: float = 1.0,
+        process_interval_s: float = 10.0,
+    ) -> None:
         """Initialize the sampler, priming psutil system CPU counters.
 
-        Note:
-            Per-process cpu_percent counters are primed during the first sample pass;
-            consequently, process cpu_percent will report 0.0 on the initial reading.
+        Args:
+            adapter: PlatformAdapter instance for OS metric calls.
+            interval_s: Telemetry sampling interval in seconds.
+            process_interval_s: Process table enumeration interval in seconds (default 10s).
         """
         self._adapter = adapter
         self.interval_s = interval_s
+        self.process_interval_s = process_interval_s
 
         # Prime global CPU counters
         psutil.cpu_percent(interval=None, percpu=True)
@@ -43,6 +50,17 @@ class Sampler:
         self._protected_names: Set[str] = frozenset(
             p.lower() for p in self._adapter.protected_process_names()
         )
+
+        # Process cadence cache and ownership cache keyed by (pid, create_time)
+        self._last_process_sample_mono: float | None = None
+        self._cached_processes: list[ProcessSample] = []
+        self._ownership_cache: dict[tuple[int, float], bool] = {}
+
+        # Cache boot time to avoid disk/eventlog queries per tick
+        try:
+            self._boot_time = psutil.boot_time()
+        except Exception:
+            self._boot_time = time.time()
 
     def sample(self) -> tuple[SystemSample, list[ProcessSample]]:
         """Collect a system telemetry sample and snapshot of running processes.
@@ -71,7 +89,13 @@ class Sampler:
 
         # 2. Virtual and swap memory
         mem = psutil.virtual_memory()
-        swap = psutil.swap_memory()
+        swap_info = self._adapter.swap_memory()
+        if swap_info is not None:
+            swap_used_bytes, swap_percent = swap_info
+        else:
+            swap = psutil.swap_memory()
+            swap_used_bytes = int(swap.used)
+            swap_percent = float(swap.percent)
 
         # 3. Delta counters: CPU switches/interrupts, Disk I/O, Network I/O
         curr_cpu_stats = psutil.cpu_stats() if hasattr(psutil, "cpu_stats") else None
@@ -150,104 +174,127 @@ class Sampler:
         max_temp = max(temps.values()) if temps else None
 
         # 5. Uptime
-        try:
-            uptime = max(0.0, now_epoch - psutil.boot_time())
-        except Exception:
-            uptime = 0.0
+        uptime = max(0.0, now_epoch - self._boot_time)
 
-        # 6. Fast process enumeration with attrs list (< 10ms without LSASS RPC)
-        processes: list[ProcessSample] = []
-        process_iter_attrs = ["pid", "name", "memory_info", "cpu_percent"]
-
-        for proc in psutil.process_iter(attrs=process_iter_attrs):
-            try:
-                info = proc.info
-                pid = int(info["pid"])
-                name = str(info["name"] or "")
-                mem_info = info.get("memory_info")
-                rss = int(mem_info.rss) if mem_info else 0
-                cpu_p = float(info["cpu_percent"]) if info.get("cpu_percent") is not None else 0.0
-
-                # Fast check based on PID and known protected names without IPC/RPC calls
-                fast_protected = (
-                    pid in {0, 1, 4}
-                    or pid == self._current_pid
-                    or pid in self._parent_pids
-                    or name.lower() in self._protected_names
-                )
-
-                processes.append(
-                    ProcessSample(
-                        pid=pid,
-                        name=name,
-                        rss_bytes=rss,
-                        cpu_percent=cpu_p,
-                        num_threads=1,
-                        age_s=0.0,
-                        is_protected=fast_protected,
+        # 6. Process enumeration on its own cadence (--process-interval, default 10s)
+        if (
+            not self._cached_processes
+            or self._last_process_sample_mono is None
+            or (monotonic_s - self._last_process_sample_mono) >= self.process_interval_s
+        ):
+            processes: list[ProcessSample] = []
+            snap = self._adapter.process_snapshot()
+            if snap is not None:
+                # Ultra-fast path (< 5ms) via platform snapshot
+                for p_meta in snap:
+                    fast_protected = (
+                        p_meta.pid in {0, 1, 4}
+                        or p_meta.pid == self._current_pid
+                        or p_meta.pid in self._parent_pids
+                        or p_meta.name.lower() in self._protected_names
                     )
-                )
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                continue
-            except Exception:
-                continue
+                    age = (
+                        max(0.0, now_epoch - p_meta.create_time_s)
+                        if p_meta.create_time_s > 0
+                        else 0.0
+                    )
+                    processes.append(
+                        ProcessSample(
+                            pid=p_meta.pid,
+                            name=p_meta.name,
+                            rss_bytes=p_meta.rss_bytes,
+                            cpu_percent=0.0,
+                            num_threads=p_meta.num_threads,
+                            age_s=age,
+                            is_protected=fast_protected,
+                        )
+                    )
+            else:
+                # Portable fallback using psutil
+                process_iter_attrs = ["pid", "name", "memory_info"]
+                for proc in psutil.process_iter(attrs=process_iter_attrs):
+                    try:
+                        info = proc.info
+                        pid = int(info["pid"])
+                        name = str(info["name"] or "")
+                        mem_info = info.get("memory_info")
+                        rss = int(mem_info.rss) if mem_info else 0
+                        fast_protected = (
+                            pid in {0, 1, 4}
+                            or pid == self._current_pid
+                            or pid in self._parent_pids
+                            or name.lower() in self._protected_names
+                        )
+                        processes.append(
+                            ProcessSample(
+                                pid=pid,
+                                name=name,
+                                rss_bytes=rss,
+                                cpu_percent=0.0,
+                                num_threads=1,
+                                age_s=0.0,
+                                is_protected=fast_protected,
+                            )
+                        )
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                        continue
+                    except Exception:
+                        continue
 
-        # Sort descending by RSS memory
-        processes.sort(key=lambda p: p.rss_bytes, reverse=True)
+            # Sort descending by RSS memory
+            processes.sort(key=lambda p: p.rss_bytes, reverse=True)
 
-        # Enrich top 10 processes with exact threads, age, and full ownership check
-        for i in range(min(10, len(processes))):
-            p_sample = processes[i]
-            try:
-                p_obj = psutil.Process(p_sample.pid)
-                th = p_obj.num_threads()
-                ctime = p_obj.create_time()
-                age = max(0.0, now_epoch - ctime)
-                user: str | None = None
-                with contextlib.suppress(Exception):
-                    user = p_obj.username()
+            # Enrich top 10 processes with cached ownership check
+            for i in range(min(10, len(processes))):
+                p_sample = processes[i]
+                full_protected = p_sample.is_protected
 
-                full_protected = is_protected(
-                    name=p_sample.name,
-                    pid=p_sample.pid,
-                    username=user,
-                    current_pid=self._current_pid,
-                    current_user=self._current_user,
-                    parent_pids=self._parent_pids,
-                    protected_names=self._protected_names,
-                )
+                if not full_protected:
+                    # Calculate or retrieve create_time for ownership cache
+                    ctime = now_epoch - p_sample.age_s if p_sample.age_s > 0 else now_epoch
+                    cache_key = (p_sample.pid, round(ctime, 1))
+                    if cache_key in self._ownership_cache:
+                        is_current_user = self._ownership_cache[cache_key]
+                    else:
+                        user_str: str | None = None
+                        with contextlib.suppress(Exception):
+                            user_str = psutil.Process(p_sample.pid).username()
+                        is_current_user = bool(
+                            user_str is not None
+                            and self._current_user
+                            and user_str.lower() == self._current_user.lower()
+                        )
+                        self._ownership_cache[cache_key] = is_current_user
 
-                user: str | None = None
-                try:
-                    user = p_obj.username()
-                except Exception:
-                    pass
-
-                full_protected = is_protected(
-                    name=p_sample.name,
-                    pid=p_sample.pid,
-                    username=user,
-                    current_pid=self._current_pid,
-                    current_user=self._current_user,
-                    parent_pids=self._parent_pids,
-                    protected_names=self._protected_names,
-                )
+                    full_protected = is_protected(
+                        name=p_sample.name,
+                        pid=p_sample.pid,
+                        username=self._current_user if is_current_user else None,
+                        current_pid=self._current_pid,
+                        current_user=self._current_user,
+                        parent_pids=self._parent_pids,
+                        protected_names=self._protected_names,
+                    )
 
                 processes[i] = ProcessSample(
                     pid=p_sample.pid,
                     name=p_sample.name,
                     rss_bytes=p_sample.rss_bytes,
                     cpu_percent=p_sample.cpu_percent,
-                    num_threads=th,
-                    age_s=age,
+                    num_threads=p_sample.num_threads,
+                    age_s=p_sample.age_s,
                     is_protected=full_protected,
                 )
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                pass
 
-        # Total thread count from adapter (0.05s via Win32 snapshot) or process count fallback
-        adapter_threads = self._adapter.thread_count()
-        total_threads = adapter_threads if adapter_threads is not None else len(processes)
+            self._cached_processes = processes
+            self._last_process_sample_mono = monotonic_s
+        else:
+            processes = self._cached_processes
+
+        # Process and thread totals via adapter
+        adapter_procs = self._adapter.process_count()
+        total_procs = adapter_procs if adapter_procs is not None else len(processes)
+        total_threads = self._adapter.thread_count()
 
         system_sample = SystemSample(
             ts_utc=now_utc,
@@ -262,8 +309,8 @@ class Sampler:
             mem_total_bytes=int(mem.total),
             mem_available_bytes=int(mem.available),
             mem_percent=float(mem.percent),
-            swap_used_bytes=int(swap.used),
-            swap_percent=float(swap.percent),
+            swap_used_bytes=swap_used_bytes,
+            swap_percent=swap_percent,
             disk_read_bytes_per_s=disk_read_bytes_per_s,
             disk_write_bytes_per_s=disk_write_bytes_per_s,
             disk_busy_ms_per_s=disk_busy_ms_per_s,
@@ -271,7 +318,7 @@ class Sampler:
             net_sent_bytes_per_s=net_sent_bytes_per_s,
             net_errors_per_s=net_errors_per_s,
             net_drops_per_s=net_drops_per_s,
-            process_count=len(processes),
+            process_count=total_procs,
             thread_count=total_threads,
             battery_percent=battery_percent,
             battery_plugged=battery_plugged,

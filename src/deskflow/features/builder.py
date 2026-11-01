@@ -3,12 +3,13 @@
 import hashlib
 import json
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
-import pandas as pd
+if TYPE_CHECKING:
+    pass
 
 from deskflow import __version__
 from deskflow.baseline import Baseline, load_baseline
@@ -44,6 +45,55 @@ METADATA_COLUMNS = [
 ]
 
 
+@dataclass(frozen=True)
+class RunBuildReport:
+    """Audit record for a single run processed during dataset build."""
+
+    run_id: str
+    label: str
+    duration_s: float
+    rows_kept: int
+    rows_dropped: dict[str, int]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "label": self.label,
+            "duration_s": round(self.duration_s, 2),
+            "rows_kept": self.rows_kept,
+            "rows_dropped": self.rows_dropped,
+        }
+
+
+class DatasetBuildResult:
+    """Result of building a dataset, preserving 2-tuple unpacking compatibility."""
+
+    def __init__(
+        self,
+        parquet_path: Path,
+        manifest_path: Path,
+        reports: list[RunBuildReport],
+    ) -> None:
+        self.parquet_path = parquet_path
+        self.manifest_path = manifest_path
+        self.reports = reports
+
+    def __iter__(self) -> Any:
+        return iter((self.parquet_path, self.manifest_path))
+
+    def __getitem__(self, idx: int) -> Path:
+        return (self.parquet_path, self.manifest_path)[idx]
+
+    def __len__(self) -> int:
+        return 2
+
+    def __repr__(self) -> str:
+        return (
+            f"DatasetBuildResult(parquet_path={self.parquet_path!r}, "
+            f"manifest_path={self.manifest_path!r}, reports={self.reports!r})"
+        )
+
+
 class DatasetValidationError(Exception):
     """Raised when a dataset fails schema or integrity validation."""
 
@@ -64,8 +114,12 @@ def build_dataset(
     horizon_s: float = 30.0,
     out_path: Path | None = None,
     keep_transition: bool = False,
-) -> tuple[Path, Path]:
+) -> DatasetBuildResult:
     """Build a parquet dataset from JSONL run files and sidecars with manifest."""
+    if isinstance(baseline, (Path, str)):
+        baseline_path = Path(baseline)
+        baseline = None
+
     if baseline is None:
         baseline = load_baseline(path=baseline_path)
 
@@ -82,6 +136,7 @@ def build_dataset(
 
     all_rows: list[dict[str, Any]] = []
     processed_run_ids: list[str] = []
+    run_reports: list[RunBuildReport] = []
 
     for jf in jsonl_files:
         try:
@@ -93,6 +148,15 @@ def build_dataset(
         if not records:
             continue
 
+        run_id = records[0].run_id
+        label = records[0].label
+        duration_s = (
+            records[-1].sample.monotonic_s - records[0].sample.monotonic_s
+            if len(records) > 1
+            else 0.0
+        )
+        drop_stats: dict[str, int] = {}
+
         meta_path = jf.with_suffix(".meta.json")
         meta: dict[str, Any] | None = None
         if meta_path.exists():
@@ -103,6 +167,16 @@ def build_dataset(
                 pass
 
         if meta and meta.get("aborted"):
+            drop_stats["aborted run"] = len(records)
+            run_reports.append(
+                RunBuildReport(
+                    run_id=run_id,
+                    label=label,
+                    duration_s=duration_s,
+                    rows_kept=0,
+                    rows_dropped=drop_stats,
+                )
+            )
             logger.warning("Skipping aborted run %s (%s)", jf.name, meta.get("abort_reason"))
             continue
 
@@ -112,14 +186,28 @@ def build_dataset(
             meta=meta,
             horizon_s=horizon_s,
             keep_transition=keep_transition,
+            drop_stats=drop_stats,
+        )
+
+        rows_kept = len(run_rows)
+        run_reports.append(
+            RunBuildReport(
+                run_id=run_id,
+                label=label,
+                duration_s=duration_s,
+                rows_kept=rows_kept,
+                rows_dropped=drop_stats,
+            )
         )
 
         if run_rows:
             all_rows.extend(run_rows)
-            processed_run_ids.append(records[0].run_id)
+            processed_run_ids.append(run_id)
 
     if not all_rows:
         raise ValueError("No valid rows could be extracted from input runs.")
+
+    import pandas as pd
 
     df = pd.DataFrame(all_rows)
 
@@ -159,16 +247,24 @@ def build_dataset(
         },
         "build_utc": datetime.now(UTC).isoformat(),
         "sha256": sha256_hex,
+        "run_reports": [r.to_dict() for r in run_reports],
     }
 
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest_dict, f, indent=2)
 
-    return target_parquet, manifest_path
+    return DatasetBuildResult(
+        parquet_path=target_parquet,
+        manifest_path=manifest_path,
+        reports=run_reports,
+    )
 
 
 def describe_dataset(parquet_path: Path) -> dict[str, Any]:
     """Calculate summary statistics and health metrics for a dataset."""
+    import numpy as np
+    import pandas as pd
+
     df = pd.read_parquet(parquet_path)
 
     total_rows = len(df)
@@ -233,6 +329,8 @@ def describe_dataset(parquet_path: Path) -> dict[str, Any]:
 
 def validate_dataset(parquet_path: Path) -> list[str]:
     """Validate schema compliance, column presence, target completeness, and duplicate freedom."""
+    import pandas as pd
+
     errors: list[str] = []
     try:
         df = pd.read_parquet(parquet_path)
@@ -270,6 +368,8 @@ def merge_datasets(dataset_files: list[Path], out_path: Path) -> tuple[Path, Pat
     """Merge datasets from multiple machines or sessions, re-verifying version compatibility."""
     if not dataset_files:
         raise ValueError("No dataset files specified for merge.")
+
+    import pandas as pd
 
     dfs: list[pd.DataFrame] = []
     horizons: set[float] = set()

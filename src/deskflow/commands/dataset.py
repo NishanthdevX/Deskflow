@@ -68,6 +68,28 @@ def build_command(
     with open(manifest_path, encoding="utf-8") as f:
         meta = json.load(f)
 
+    # Print per-run audit table
+    run_reports = meta.get("run_reports", [])
+    if run_reports:
+        table = Table(title="Per-Run Build Summary", show_header=True)
+        table.add_column("Run ID", style="bold")
+        table.add_column("Label")
+        table.add_column("Duration", justify="right")
+        table.add_column("Kept", justify="right")
+        table.add_column("Dropped (Reasons)")
+
+        for r in run_reports:
+            dur_str = f"{r['duration_s']:.1f}s"
+            kept_str = str(r["rows_kept"])
+            dropped_dict = r.get("rows_dropped", {})
+            if dropped_dict:
+                dropped_str = ", ".join(f"{k}: {v}" for k, v in dropped_dict.items())
+            else:
+                dropped_str = "none"
+            table.add_row(r["run_id"], r["label"], dur_str, kept_str, dropped_str)
+
+        console.print(table)
+
     console.print("[green]Dataset built successfully.[/green]")
     console.print(f"Parquet file:  {parquet_path}")
     console.print(f"Manifest file: {manifest_path}")

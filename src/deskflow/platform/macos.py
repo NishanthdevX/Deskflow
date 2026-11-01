@@ -109,3 +109,14 @@ class MacOSAdapter(PlatformAdapter):
     def protected_process_names(self) -> frozenset[str]:
         """Protected macOS processes."""
         return _MACOS_PROTECTED_PROCESSES
+
+    def process_count(self) -> int | None:
+        """Total active process count via psutil.pids()."""
+        try:
+            return len(psutil.pids())
+        except Exception:
+            return None
+
+    def thread_count(self) -> int | None:
+        """Return None as no low-overhead thread counting source exists on macOS."""
+        return None

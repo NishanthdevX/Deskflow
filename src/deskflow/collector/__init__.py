@@ -14,6 +14,7 @@ from deskflow.collector.probe import (
     DISK_PROBE_BYTES,
     MEM_PROBE_BYTES,
     MEM_PROBE_STRIDE,
+    PROBE_REPEATS,
     run_probe,
 )
 from deskflow.collector.recorder import RunRecorder, generate_run_id, load_run
@@ -25,6 +26,7 @@ __all__ = [
     "DISK_PROBE_BYTES",
     "MEM_PROBE_BYTES",
     "MEM_PROBE_STRIDE",
+    "PROBE_REPEATS",
     "ProbeResult",
     "ProcessSample",
     "Record",

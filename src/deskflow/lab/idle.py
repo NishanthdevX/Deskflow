@@ -25,4 +25,3 @@ class IdleScenario(Scenario):
 
     def get_stats(self) -> ScenarioStats:
         return ScenarioStats(worker_count=0, bytes_allocated=0)
-

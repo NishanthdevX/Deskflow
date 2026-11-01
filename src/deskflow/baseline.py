@@ -10,12 +10,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-import platformdirs
-
 from deskflow import __version__
 from deskflow.collector.models import ProbeResult
-from deskflow.collector.probe import run_probe
+from deskflow.collector.probe import (
+    CPU_PROBE_ITERATIONS,
+    DISK_PROBE_BYTES,
+    MEM_PROBE_BYTES,
+    MEM_PROBE_STRIDE,
+    PROBE_REPEATS,
+    run_probe,
+)
+from deskflow.paths import get_config_dir
 from deskflow.platform import get_adapter
 
 
@@ -25,7 +30,7 @@ class CalibrationError(Exception):
 
 def get_default_config_dir() -> Path:
     """Return user configuration directory for deskflow."""
-    return Path(platformdirs.user_config_dir("deskflow", ensure_exists=True))
+    return get_config_dir()
 
 
 def get_or_create_machine_id(config_dir: Path | None = None) -> str:
@@ -76,6 +81,12 @@ class Baseline:
     p90_total_ns: float
     sample_count: int
     deskflow_version: str
+    cv: float = 0.0
+    probe_repeats: int = PROBE_REPEATS
+    cpu_iterations: int = CPU_PROBE_ITERATIONS
+    mem_bytes: int = MEM_PROBE_BYTES
+    mem_stride: int = MEM_PROBE_STRIDE
+    disk_bytes: int = DISK_PROBE_BYTES
 
     def to_dict(self) -> dict[str, Any]:
         """Convert baseline record to dictionary."""
@@ -96,6 +107,12 @@ class Baseline:
             p90_total_ns=float(data["p90_total_ns"]),
             sample_count=int(data["sample_count"]),
             deskflow_version=str(data["deskflow_version"]),
+            cv=float(data.get("cv", 0.0)),
+            probe_repeats=int(data.get("probe_repeats", PROBE_REPEATS)),
+            cpu_iterations=int(data.get("cpu_iterations", CPU_PROBE_ITERATIONS)),
+            mem_bytes=int(data.get("mem_bytes", MEM_PROBE_BYTES)),
+            mem_stride=int(data.get("mem_stride", MEM_PROBE_STRIDE)),
+            disk_bytes=int(data.get("disk_bytes", DISK_PROBE_BYTES)),
         )
 
 
@@ -185,6 +202,7 @@ def calibrate_baseline(
 
     machine_id = get_or_create_machine_id(config_dir=config_dir)
     adapter = get_adapter()
+    import numpy as np
 
     baseline = Baseline(
         machine_id=machine_id,
@@ -198,6 +216,12 @@ def calibrate_baseline(
         p90_total_ns=float(np.percentile(totals, 90)),
         sample_count=len(usable),
         deskflow_version=__version__,
+        cv=float(cv),
+        probe_repeats=PROBE_REPEATS,
+        cpu_iterations=CPU_PROBE_ITERATIONS,
+        mem_bytes=MEM_PROBE_BYTES,
+        mem_stride=MEM_PROBE_STRIDE,
+        disk_bytes=DISK_PROBE_BYTES,
     )
 
     save_baseline(baseline, path=out_path, config_dir=config_dir)

@@ -3,9 +3,7 @@
 import sys
 import time
 from datetime import UTC, datetime
-from pathlib import Path
 
-import platformdirs
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -17,6 +15,7 @@ from deskflow.lab import (
 )
 from deskflow.lab.plans import PlanName, get_plan
 from deskflow.lab.runner import LabRunner
+from deskflow.paths import get_data_dir
 
 app = typer.Typer(help="Manage and execute controlled fault-injection lab sessions.")
 console = Console()
@@ -165,6 +164,11 @@ def run_command(
         "-y",
         help="Skip interactive confirmation.",
     ),
+    storage: bool = typer.Option(
+        False,
+        "--storage",
+        help="Enable background storage cache scanning.",
+    ),
 ) -> None:
     """Execute a single fault injection lab run with continuous telemetry recording."""
     total_time_s = pre + hold + post
@@ -200,6 +204,7 @@ def run_command(
         interval_s=2.0,
         probe_interval_s=4.0,
         status_callback=_status,
+        enable_storage=storage,
     )
 
     console.print(f"Starting lab run (session={runner.session_id})...")
@@ -227,6 +232,11 @@ def session_command(
         "-y",
         help="Skip interactive confirmation.",
     ),
+    storage: bool = typer.Option(
+        False,
+        "--storage",
+        help="Enable background storage cache scanning.",
+    ),
 ) -> None:
     """Execute a complete multi-run lab plan sequentially with inter-run cooldown."""
     runs = get_plan(plan)
@@ -238,7 +248,7 @@ def session_command(
 
     # Find completed runs in session if resuming
     completed_keys: set[str] = set()
-    runs_dir = Path(platformdirs.user_data_dir("deskflow", ensure_exists=True)) / "runs"
+    runs_dir = get_data_dir() / "runs"
     if runs_dir.exists():
         for meta_file in runs_dir.glob("*.meta.json"):
             try:

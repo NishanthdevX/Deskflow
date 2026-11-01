@@ -37,6 +37,16 @@ def collect_command(
         "--probe-interval",
         help="Performance probe interval in seconds.",
     ),
+    process_interval: float = typer.Option(
+        10.0,
+        "--process-interval",
+        help="Process table sampling interval in seconds.",
+    ),
+    storage: bool = typer.Option(
+        False,
+        "--storage",
+        help="Enable background storage cache scanning.",
+    ),
     label: str = typer.Option(
         "unlabeled",
         "--label",
@@ -67,9 +77,15 @@ def collect_command(
         )
 
     adapter = get_adapter()
-    sampler = Sampler(adapter=adapter, interval_s=interval)
-    storage_scanner = StorageScanner(adapter=adapter)
-    storage_scanner.start_background_scan()
+    sampler = Sampler(
+        adapter=adapter,
+        interval_s=interval,
+        process_interval_s=process_interval,
+    )
+    storage_scanner: StorageScanner | None = None
+    if storage:
+        storage_scanner = StorageScanner(adapter=adapter)
+        storage_scanner.start_background_scan()
 
     recorder = RunRecorder(out_path=out)
     console.print(
@@ -94,17 +110,21 @@ def collect_command(
             # 1. Take telemetry sample
             sample, processes = sampler.sample()
 
-            # 2. Check if probe is due
+            # 2. Check if probe is due (pausing storage scanner during execution)
             probe: ProbeResult | None = None
             if now_mono >= next_probe_mono:
-                probe = run_probe()
+                if storage_scanner:
+                    with storage_scanner.pause_during_probe():
+                        probe = run_probe()
+                else:
+                    probe = run_probe()
                 last_probe_str = f"{probe.total_ns / 1_000_000:.2f} ms"
                 # Advance next probe target
                 while next_probe_mono <= now_mono:
                     next_probe_mono += probe_interval
 
-            # 3. Storage snapshot from background scan
-            storage = storage_scanner.get_cached_report()
+            # 3. Storage snapshot from background scan (if enabled)
+            storage_report = storage_scanner.get_cached_report() if storage_scanner else None
 
             # 4. Form and persist record
             record = Record(
@@ -114,7 +134,7 @@ def collect_command(
                 sample=sample,
                 probe=probe,
                 top_processes=processes[:10],
-                storage=storage,
+                storage=storage_report,
             )
             recorder.write(record)
 
@@ -138,5 +158,8 @@ def collect_command(
     except KeyboardInterrupt:
         console.print("\nCollection stopped by user.")
     finally:
+        if storage_scanner:
+            storage_scanner.stop()
+        recorder.close()
         recorder.close()
         console.print(f"Finished. Wrote {recorder.records_written} records to {recorder.path}")

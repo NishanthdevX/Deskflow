@@ -1,13 +1,15 @@
 """Session-level and run-level dataset splitting without temporal leakage."""
 
 import logging
+from typing import TYPE_CHECKING
 
-import pandas as pd
+if TYPE_CHECKING:
+    import pandas as pd
 
 logger = logging.getLogger(__name__)
 
 
-def assign_splits(df: pd.DataFrame, test_ratio: float = 0.20) -> tuple[pd.DataFrame, str]:
+def assign_splits(df: "pd.DataFrame", test_ratio: float = 0.20) -> tuple["pd.DataFrame", str]:
     """Assign train/test splits at the session level (fallback to run level if only 1 session).
 
     Whole sessions/runs are assigned to test starting from the newest until test_ratio is met.

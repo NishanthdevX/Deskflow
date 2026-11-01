@@ -7,15 +7,16 @@ import os
 import shutil
 from pathlib import Path
 
-import platformdirs
 import psutil
+
+from deskflow.paths import get_data_dir
 
 logger = logging.getLogger(__name__)
 
 
 def get_scratch_dir() -> Path:
     """Return user data directory for lab scratch files."""
-    data_dir = Path(platformdirs.user_data_dir("deskflow", ensure_exists=True))
+    data_dir = get_data_dir()
     scratch_dir = data_dir / "lab-scratch"
     scratch_dir.mkdir(parents=True, exist_ok=True)
     return scratch_dir

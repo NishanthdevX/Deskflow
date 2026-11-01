@@ -6,9 +6,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TextIO
 
-import platformdirs
-
 from deskflow.collector.models import Record
+from deskflow.paths import get_data_dir
 
 
 def generate_run_id() -> str:
@@ -39,11 +38,7 @@ class RunRecorder:
         if out_path is not None:
             self.path = Path(out_path)
         else:
-            base_dir = (
-                user_data_dir
-                if user_data_dir is not None
-                else Path(platformdirs.user_data_dir("deskflow", ensure_exists=True))
-            )
+            base_dir = user_data_dir if user_data_dir is not None else get_data_dir()
             runs_dir = base_dir / "runs"
             runs_dir.mkdir(parents=True, exist_ok=True)
             self.path = runs_dir / f"{self.run_id}.jsonl"

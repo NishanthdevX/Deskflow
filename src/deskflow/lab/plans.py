@@ -63,4 +63,3 @@ def get_plan(plan_name: PlanName) -> list[LabRunSpec]:
         return runs
 
     raise ValueError(f"Unknown plan: {plan_name}")
-

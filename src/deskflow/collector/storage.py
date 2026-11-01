@@ -1,8 +1,10 @@
 """Storage scanner for temporary, cache, and trash locations."""
 
+import contextlib
 import os
 import threading
 import time
+from collections.abc import Generator
 from datetime import UTC, datetime
 
 from deskflow.collector.models import StorageEntry, StorageReport
@@ -36,6 +38,29 @@ class StorageScanner:
         self._cached_monotonic: float | None = None
         self._lock = threading.Lock()
         self._is_scanning = False
+        self._pause_event = threading.Event()
+        self._stop_event = threading.Event()
+
+    def pause(self) -> None:
+        """Pause scanning (e.g. during micro-benchmark probe execution)."""
+        self._pause_event.set()
+
+    def resume(self) -> None:
+        """Resume scanning after probe completion."""
+        self._pause_event.clear()
+
+    @contextlib.contextmanager
+    def pause_during_probe(self) -> Generator[None, None, None]:
+        """Context manager ensuring the scanner pauses while probe is executing."""
+        self._pause_event.set()
+        try:
+            yield
+        finally:
+            self._pause_event.clear()
+
+    def stop(self) -> None:
+        """Signal background scanner to stop."""
+        self._stop_event.set()
 
     def scan(self, force: bool = False) -> StorageReport:
         """Scan configured locations, respecting time budget, entry cap, and symlink guards.
@@ -73,6 +98,12 @@ class StorageScanner:
             stack: list[str] = [loc.path]
 
             while stack:
+                if self._stop_event.is_set():
+                    break
+                # Pause while probe is in progress
+                while self._pause_event.is_set() and not self._stop_event.is_set():
+                    time.sleep(0.01)
+
                 # Check budgets
                 if time.monotonic() - start_mono >= self.time_budget_s:
                     truncated = True

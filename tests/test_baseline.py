@@ -198,3 +198,76 @@ def test_baseline_cli_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     )
     assert cal_res.exit_code == 0
     assert "Baseline calibration successful" in cal_res.stdout
+
+    # Show on existing file
+    save_baseline(
+        Baseline(
+            machine_id="mock-id",
+            created_utc="2026-11-01T12:00:00Z",
+            platform="windows",
+            cpu_ns=10e6,
+            mem_ns=5e6,
+            disk_ns=5e6,
+            total_ns=20e6,
+            p10_total_ns=19e6,
+            p90_total_ns=21e6,
+            sample_count=10,
+            deskflow_version="0.1.0",
+        ),
+        path=baseline_path,
+    )
+    show_res = runner.invoke(app, ["baseline", "show", "--path", str(baseline_path)])
+    assert show_res.exit_code == 0
+    assert "mock-id" in show_res.stdout
+
+
+def test_baseline_calibrate_cli_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify CLI baseline calibrate exits with code 1 when CalibrationError is raised."""
+    runner = CliRunner()
+
+    def _fail_cal(**kwargs):
+        raise CalibrationError("CV exceeded")
+
+    monkeypatch.setattr("deskflow.commands.baseline.calibrate_baseline", _fail_cal)
+    res = runner.invoke(app, ["baseline", "calibrate", "--duration", "6"])
+    assert res.exit_code == 1
+    assert "Calibration rejected" in res.stdout
+
+
+def test_machine_id_corrupt_file_recovery(tmp_path: Path) -> None:
+    """Verify corrupted machine.json is overwritten with a valid UUID."""
+    bad_file = tmp_path / "machine.json"
+    bad_file.write_text("{corrupt json", encoding="utf-8")
+
+    mid = get_or_create_machine_id(config_dir=tmp_path)
+    assert len(mid) == 36
+
+
+def test_load_baseline_missing_raises(tmp_path: Path) -> None:
+    """Verify load_baseline raises FileNotFoundError when path is missing."""
+    with pytest.raises(FileNotFoundError, match="Baseline file not found"):
+        load_baseline(path=tmp_path / "nonexistent.json")
+
+
+def test_calibrate_progress_callback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify calibrate_baseline invokes progress callback on each tick."""
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    calls = []
+
+    def _cb(idx: int, total: int, lat_ms: float) -> None:
+        calls.append((idx, total, lat_ms))
+
+    mock_probe = MagicMock(
+        return_value=ProbeResult(
+            ts_utc="2026-11-01T12:00:00Z", cpu_ns=10e6, mem_ns=2e6, disk_ns=3e6, total_ns=15e6
+        )
+    )
+    calibrate_baseline(
+        duration_s=12.0,
+        interval_s=2.0,
+        warmup_samples=1,
+        probe_fn=mock_probe,
+        config_dir=tmp_path,
+        progress_callback=_cb,
+    )
+    assert len(calls) == 6

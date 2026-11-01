@@ -13,6 +13,11 @@ from typing import Any
 from deskflow import __version__
 from deskflow.baseline import get_or_create_machine_id
 from deskflow.collector import (
+    CPU_PROBE_ITERATIONS,
+    DISK_PROBE_BYTES,
+    MEM_PROBE_BYTES,
+    MEM_PROBE_STRIDE,
+    PROBE_REPEATS,
     SCHEMA_VERSION,
     ProbeResult,
     Record,
@@ -48,6 +53,7 @@ class LabRunner:
         out_dir: Path | None = None,
         config_dir: Path | None = None,
         status_callback: Callable[[str, float, float], None] | None = None,
+        enable_storage: bool = False,
     ) -> None:
         self.scenario = scenario
         self.pre_duration_s = pre_duration_s
@@ -57,6 +63,7 @@ class LabRunner:
         self.probe_interval_s = probe_interval_s
         self.config_dir = config_dir
         self.status_callback = status_callback
+        self.enable_storage = enable_storage
 
         self.machine_id = get_or_create_machine_id(config_dir=config_dir)
         self.session_id = session_id or f"lab-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
@@ -82,8 +89,10 @@ class LabRunner:
 
         adapter = get_adapter()
         sampler = Sampler(adapter=adapter, interval_s=self.interval_s)
-        storage_scanner = StorageScanner(adapter=adapter)
-        storage_scanner.start_background_scan()
+        storage_scanner: StorageScanner | None = None
+        if self.enable_storage:
+            storage_scanner = StorageScanner(adapter=adapter)
+            storage_scanner.start_background_scan()
 
         label = f"lab:{self.scenario.name}:{self.scenario.intensity}:{self.scenario.pattern}"
         total_duration = self.pre_duration_s + self.hold_duration_s + self.post_duration_s
@@ -112,6 +121,8 @@ class LabRunner:
         def _cleanup() -> None:
             if self._watchdog:
                 self._watchdog.stop()
+            if storage_scanner:
+                storage_scanner.stop()
             self.scenario.stop()
             unregister_children(scratch_dir=self.scratch_dir)
 
@@ -174,11 +185,15 @@ class LabRunner:
                 # Collect probe if due
                 probe: ProbeResult | None = None
                 if now_mono >= next_probe_mono:
-                    probe = run_probe()
+                    if storage_scanner:
+                        with storage_scanner.pause_during_probe():
+                            probe = run_probe()
+                    else:
+                        probe = run_probe()
                     while next_probe_mono <= now_mono:
                         next_probe_mono += self.probe_interval_s
 
-                storage = storage_scanner.get_cached_report()
+                storage = storage_scanner.get_cached_report() if storage_scanner else None
                 record = Record(
                     schema_version=SCHEMA_VERSION,
                     run_id=self.recorder.run_id,
@@ -229,6 +244,13 @@ class LabRunner:
             "abort_reason": self._abort_reason,
             "worker_count": stats.worker_count,
             "bytes_allocated": stats.bytes_allocated,
+            "probe_repeats": PROBE_REPEATS,
+            "probe_constants": {
+                "cpu_iterations": CPU_PROBE_ITERATIONS,
+                "mem_bytes": MEM_PROBE_BYTES,
+                "mem_stride": MEM_PROBE_STRIDE,
+                "disk_bytes": DISK_PROBE_BYTES,
+            },
         }
 
         meta_path = self.recorder.path.with_suffix(".meta.json")

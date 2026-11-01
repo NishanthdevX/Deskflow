@@ -69,6 +69,7 @@ def calibrate_command(
     table.add_row("Total Median Latency", f"{baseline.total_ns / 1_000_000:.2f} ms")
     table.add_row("Total Latency 10th Percentile", f"{baseline.p10_total_ns / 1_000_000:.2f} ms")
     table.add_row("Total Latency 90th Percentile", f"{baseline.p90_total_ns / 1_000_000:.2f} ms")
+    table.add_row("Coefficient of Variation", f"{baseline.cv:.3f}")
     table.add_row("Sample Count", str(baseline.sample_count))
     table.add_row("Deskflow Version", baseline.deskflow_version)
 
@@ -104,8 +105,8 @@ def show_command(
     table.add_row("Total Median Latency", f"{baseline.total_ns / 1_000_000:.2f} ms")
     table.add_row("Total Latency 10th Percentile", f"{baseline.p10_total_ns / 1_000_000:.2f} ms")
     table.add_row("Total Latency 90th Percentile", f"{baseline.p90_total_ns / 1_000_000:.2f} ms")
+    table.add_row("Coefficient of Variation", f"{baseline.cv:.3f}")
     table.add_row("Sample Count", str(baseline.sample_count))
     table.add_row("Deskflow Version", baseline.deskflow_version)
 
     console.print(table)
-

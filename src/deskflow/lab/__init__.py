@@ -7,6 +7,7 @@ from deskflow.lab.base import (
     Pattern,
     Scenario,
     ScenarioStats,
+    calculate_safe_memory_budget,
     get_memory_floor_bytes,
 )
 from deskflow.lab.combo import ComboScenario
@@ -61,9 +62,25 @@ def create_scenario(
                 )
             )
         elif name == "background_load":
-            scenarios.append(BackgroundLoadScenario(intensity=intensity, pattern=pattern))
+            worker_override = kwargs.get("worker_count_override")
+            scenarios.append(
+                BackgroundLoadScenario(
+                    intensity=intensity,
+                    pattern=pattern,
+                    worker_count_override=int(str(worker_override))
+                    if worker_override is not None
+                    else None,
+                )
+            )
         elif name == "idle":
             scenarios.append(IdleScenario(intensity=intensity, pattern=pattern))
+        elif name == "combo":
+            scenarios.extend(
+                [
+                    CpuPressureScenario(intensity=intensity, pattern=pattern),
+                    MemoryPressureScenario(intensity=intensity, pattern=pattern),
+                ]
+            )
         else:
             raise ValueError(f"Unknown lab scenario: {name}")
 
@@ -85,6 +102,7 @@ __all__ = [
     "Pattern",
     "Scenario",
     "ScenarioStats",
+    "calculate_safe_memory_budget",
     "cleanup_leftovers",
     "create_scenario",
     "get_memory_floor_bytes",
