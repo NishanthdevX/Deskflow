@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0.dev2] - 2026-11-01
+
+### Added
+- Machine identity module (`src/deskflow/baseline.py`) with random UUID4 generation decoupled from hardware/hostnames.
+- System performance baseline calibration (`deskflow baseline calibrate` and `deskflow baseline show`) with 0.5 CV idle verification.
+- Fault-injection lab framework (`src/deskflow/lab/`) with `CpuPressureScenario`, `MemoryPressureScenario`, `DiskPressureScenario`, `BackgroundLoadScenario`, `IdleScenario`, and compound `ComboScenario`.
+- Injection patterns support: `constant`, `ramp`, and `burst` duty cycles.
+- Background safety watchdog (`LabWatchdog`) terminating runs if RAM available falls below safety floor (`max(2GB, 15% RAM)`) or free disk falls below 5 GiB.
+- Process tracking lock file (`lab_children.lock`) and leftover scratch cleanup on lab startup and exit.
+- Multi-run lab execution plans (`plans.py`) and CLI commands: `deskflow lab list`, `deskflow lab plan`, `deskflow lab run`, and `deskflow lab session` with resumption support.
+- Sidecar metadata persistence (`<run_id>.meta.json`) tracking precise planned/actual injection phase timelines and worker allocations.
+- Feature engineering registry (`src/deskflow/features/registry.py`) with `FEATURE_SET_VERSION = 1` defining 48 time-windowed statistical features (10s, 30s, 60s).
+- Feature extraction pipeline (`extract.py` and `window.py`) with strict no-lookahead enforcement, 60s history warm-up rule, 3x interval gap drop rule, and target alignment.
+- Dataset building, validation, description, and multi-machine merging (`builder.py`) outputting Parquet files and sibling JSON manifests with SHA-256 verification.
+- Session-level splitting (`splits.py`) preventing rolling window data leakage between train and test splits, with run-level fallback warning.
+- CLI dataset commands: `deskflow dataset build`, `deskflow dataset describe`, `deskflow dataset validate`, and `deskflow dataset merge`.
+- Architecture decisions: `0002-add-pyarrow-dependency.md`, `0003-session-level-splitting.md`, `0004-baseline-normalization.md`.
+- Documentation: `docs/ml-design.md`, `docs/data-collection.md`, and measured collector overhead in `docs/architecture.md`.
+- Overhead measurement script: `scripts/measure_overhead.py`.
+
 ## [0.1.0.dev1] - 2026-11-01
 
 ### Added

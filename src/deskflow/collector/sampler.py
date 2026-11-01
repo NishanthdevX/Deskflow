@@ -1,5 +1,6 @@
 """System telemetry sampler using psutil and platform adapter."""
 
+import contextlib
 import os
 import time
 from collections.abc import Set
@@ -154,9 +155,9 @@ class Sampler:
         except Exception:
             uptime = 0.0
 
-        # 6. Fast process enumeration with attrs list (< 100ms)
+        # 6. Fast process enumeration with attrs list (< 10ms without LSASS RPC)
         processes: list[ProcessSample] = []
-        process_iter_attrs = ["pid", "name", "memory_info", "cpu_percent", "username"]
+        process_iter_attrs = ["pid", "name", "memory_info", "cpu_percent"]
 
         for proc in psutil.process_iter(attrs=process_iter_attrs):
             try:
@@ -166,16 +167,13 @@ class Sampler:
                 mem_info = info.get("memory_info")
                 rss = int(mem_info.rss) if mem_info else 0
                 cpu_p = float(info["cpu_percent"]) if info.get("cpu_percent") is not None else 0.0
-                user = info.get("username")
 
-                protected = is_protected(
-                    name=name,
-                    pid=pid,
-                    username=user,
-                    current_pid=self._current_pid,
-                    current_user=self._current_user,
-                    parent_pids=self._parent_pids,
-                    protected_names=self._protected_names,
+                # Fast check based on PID and known protected names without IPC/RPC calls
+                fast_protected = (
+                    pid in {0, 1, 4}
+                    or pid == self._current_pid
+                    or pid in self._parent_pids
+                    or name.lower() in self._protected_names
                 )
 
                 processes.append(
@@ -186,7 +184,7 @@ class Sampler:
                         cpu_percent=cpu_p,
                         num_threads=1,
                         age_s=0.0,
-                        is_protected=protected,
+                        is_protected=fast_protected,
                     )
                 )
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
@@ -197,7 +195,7 @@ class Sampler:
         # Sort descending by RSS memory
         processes.sort(key=lambda p: p.rss_bytes, reverse=True)
 
-        # Enrich top 10 processes with exact threads and age
+        # Enrich top 10 processes with exact threads, age, and full ownership check
         for i in range(min(10, len(processes))):
             p_sample = processes[i]
             try:
@@ -205,6 +203,36 @@ class Sampler:
                 th = p_obj.num_threads()
                 ctime = p_obj.create_time()
                 age = max(0.0, now_epoch - ctime)
+                user: str | None = None
+                with contextlib.suppress(Exception):
+                    user = p_obj.username()
+
+                full_protected = is_protected(
+                    name=p_sample.name,
+                    pid=p_sample.pid,
+                    username=user,
+                    current_pid=self._current_pid,
+                    current_user=self._current_user,
+                    parent_pids=self._parent_pids,
+                    protected_names=self._protected_names,
+                )
+
+                user: str | None = None
+                try:
+                    user = p_obj.username()
+                except Exception:
+                    pass
+
+                full_protected = is_protected(
+                    name=p_sample.name,
+                    pid=p_sample.pid,
+                    username=user,
+                    current_pid=self._current_pid,
+                    current_user=self._current_user,
+                    parent_pids=self._parent_pids,
+                    protected_names=self._protected_names,
+                )
+
                 processes[i] = ProcessSample(
                     pid=p_sample.pid,
                     name=p_sample.name,
@@ -212,7 +240,7 @@ class Sampler:
                     cpu_percent=p_sample.cpu_percent,
                     num_threads=th,
                     age_s=age,
-                    is_protected=p_sample.is_protected,
+                    is_protected=full_protected,
                 )
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 pass

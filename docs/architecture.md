@@ -59,6 +59,19 @@ On a reference modern multi-core development laptop under normal idle state:
 - Disk probe: ~5.58 ms
 - **Total Probe Cost**: ~33.02 ms (well within the 60 ms ceiling).
 
+## Measured Collector Overhead
+
+Collector overhead is measured using `scripts/measure_overhead.py`, executing `deskflow collect --duration 60 --interval 2 --probe-interval 5` as a subprocess and tracking child process user + system CPU time with `psutil`:
+
+- **Machine**: AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD (Windows 11, 8 physical cores, 16 logical cores)
+- **Subprocess wall time**: 61.62 s
+- **User CPU time**: 2.11 s
+- **System CPU time**: 20.83 s
+- **Total CPU time**: 22.94 s
+- **Measured CPU Overhead**: 37.22% of one logical core (2.33% of overall 16-core system capacity).
+
+On Windows, system CPU time in psutil is elevated due to process table traversal across non-accessible system services. The sampling layer minimizes this impact by bypassing LSASS username RPC calls during full system enumeration and reserving detailed inspection for the top RSS candidate processes.
+
 ## Platform Layer Isolation
 
 All operating system distinctions live exclusively within `src/deskflow/platform/`. Modules outside this package never inspect `sys.platform` or call OS-specific bindings. If an operating system capability is absent or requires elevated privileges, the adapter safely returns `None` or an empty container.

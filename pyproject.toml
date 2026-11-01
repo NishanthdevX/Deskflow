@@ -21,6 +21,7 @@ dependencies = [
     "textual",
     "joblib",
     "platformdirs",
+    "pyarrow",
 ]
 
 [project.scripts]

@@ -33,9 +33,9 @@ def collect_command(
         help="Telemetry sampling interval in seconds.",
     ),
     probe_interval: float = typer.Option(
-        5.0,
+        4.0,
         "--probe-interval",
-        help="Performance probe interval in seconds (must be an exact multiple of interval).",
+        help="Performance probe interval in seconds.",
     ),
     label: str = typer.Option(
         "unlabeled",
@@ -52,13 +52,19 @@ def collect_command(
     console = Console()
 
     # Validate intervals
+    if probe_interval < interval:
+        console.print(
+            f"[red]Error:[/red] --probe-interval ({probe_interval}) must be >= "
+            f"--interval ({interval})."
+        )
+        raise typer.Exit(code=1)
+
     ratio = probe_interval / interval
     if abs(ratio - round(ratio)) > 1e-6:
         console.print(
-            f"[red]Error:[/red] --probe-interval ({probe_interval}) must be an exact multiple "
-            f"of --interval ({interval})."
+            f"[yellow]Warning:[/yellow] --probe-interval ({probe_interval}) is not an exact "
+            f"multiple of --interval ({interval}). Probes will run at the nearest tick."
         )
-        raise typer.Exit(code=1)
 
     adapter = get_adapter()
     sampler = Sampler(adapter=adapter, interval_s=interval)

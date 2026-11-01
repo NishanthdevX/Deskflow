@@ -60,6 +60,54 @@ deskflow collect --duration 600 --interval 2 --probe-interval 5 --label baseline
 deskflow collect --duration 20 --interval 1 --probe-interval 5 --label smoke --out ./data/smoke.jsonl
 ```
 
+### Performance Baseline Calibration (`baseline`)
+
+Calibrate and inspect your machine's idle latency baseline:
+
+```bash
+# Calibrate idle baseline over 120 seconds (samples probe every 2s, discards first 3)
+deskflow baseline calibrate --duration 120
+
+# View current calibrated baseline
+deskflow baseline show
+```
+
+### Controlled Fault-Injection Lab (`lab`)
+
+Generate labeled system stress workloads under safety watchdog supervision:
+
+```bash
+# List all scenarios, intensities, and patterns
+deskflow lab list
+
+# Inspect execution plan schedule
+deskflow lab plan --plan standard
+
+# Execute a single injection run with confirmation
+deskflow lab run --scenario cpu_pressure --intensity medium --pattern constant --pre 30 --hold 180 --post 60
+
+# Run an automated session across plans
+deskflow lab session --plan quick --yes
+```
+
+### Dataset Building & Validation (`dataset`)
+
+Compile raw JSONL run recordings and sidecar metadata into Parquet datasets:
+
+```bash
+# Build parquet dataset with session-level splits
+deskflow dataset build --runs ./runs --out dataset.parquet
+
+# Inspect dataset metrics, distributions, and missing features
+deskflow dataset describe dataset.parquet
+
+# Validate schema, target integrity, and duplicate freedom
+deskflow dataset validate dataset.parquet
+
+# Merge datasets from multiple machines
+deskflow dataset merge machine1.parquet machine2.parquet --out combined.parquet
+```
+
 ## How it works
 
 1. The collector samples psutil telemetry on a short interval.
