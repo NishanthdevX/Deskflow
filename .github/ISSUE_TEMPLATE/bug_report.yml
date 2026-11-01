@@ -1,0 +1,54 @@
+name: Bug report
+description: Report incorrect or unexpected behaviour.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, check whether a similar issue already exists.
+
+  - type: input
+    id: version
+    attributes:
+      label: deskflow version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system and version
+      placeholder: "Windows 11 23H2 / macOS 14.4"
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.11.9"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened
+      description: Describe the bug. Include the command you ran and the full output.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true

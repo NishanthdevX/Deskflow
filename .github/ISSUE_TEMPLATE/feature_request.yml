@@ -1,0 +1,38 @@
+name: Feature request
+description: Propose a new capability or improvement.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve
+      description: Describe the situation where deskflow falls short today.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+
+  - type: checkboxes
+    id: phase
+    attributes:
+      label: Which phase does this belong to
+      options:
+        - label: "Phase 1: Collector and probe"
+        - label: "Phase 2: Dataset and features"
+        - label: "Phase 3: Training and offline evaluation"
+        - label: "Phase 4: Inference and health score"
+        - label: "Phase 5: CLI and dashboard"
+        - label: "Phase 6: Fixes and re-validation"
+        - label: "Phase 7: Live accuracy view"
+        - label: "Phase 8: Packaging and release"
+        - label: "Not sure / new phase needed"

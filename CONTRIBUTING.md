@@ -1,0 +1,57 @@
+# Contributing to deskflow
+
+## Development setup
+
+Requires Python 3.11 or newer and [uv](https://docs.astral.sh/uv/).
+
+```
+git clone <repo-url>
+cd deskflow
+uv sync
+```
+
+This installs all runtime and dev dependencies into an isolated virtual environment.
+
+## Running checks
+
+```
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy src
+uv run pytest
+```
+
+All four must pass with zero warnings before opening a pull request.
+
+## Commit style
+
+Use [Conventional Commits](https://www.conventionalcommits.org/):
+
+    feat: add cpu pressure detector
+    fix: handle None return from platform.get_cpu_freq()
+    docs: clarify probe latency definition in architecture.md
+    test: add integration test for disk collector
+    chore: bump ruff to 0.5.0
+    refactor: extract rolling window logic into features.window
+
+One logical change per commit. Do not batch unrelated changes.
+
+## Adding a platform capability
+
+Platform-specific code lives only in `src/deskflow/platform/`. The steps are:
+
+1. Define the capability in `src/deskflow/platform/base.py` as an abstract method
+   returning `Optional[T]`.
+2. Implement it in `src/deskflow/platform/windows.py` and/or
+   `src/deskflow/platform/macos.py`.
+3. Expose a boolean capability flag (e.g. `HAS_THERMAL_DATA`) in the platform
+   interface so callers can check availability without catching exceptions.
+4. Never crash on a missing capability: return `None` and let the caller decide.
+5. If elevation is required, document it in the method docstring and in
+   `docs/decisions/` with a new ADR.
+
+## Adding a dependency
+
+New runtime or dev dependencies require an ADR in `docs/decisions/` that justifies
+why the existing dependency set cannot meet the need. Do not add dependencies
+speculatively.

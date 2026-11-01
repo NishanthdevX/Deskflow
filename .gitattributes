@@ -1,0 +1,12 @@
+# Enforce LF line endings for all text files
+* text=auto eol=lf
+
+# Treat Python source as text
+*.py text eol=lf
+
+# Binaries
+*.pkl binary
+*.joblib binary
+*.parquet binary
+*.whl binary
+*.tar.gz binary

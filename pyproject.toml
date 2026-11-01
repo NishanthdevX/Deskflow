@@ -1,0 +1,84 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "deskflow"
+version = "0.1.0.dev0"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+readme = "README.md"
+description = "Command-line device-care tool with ML-based performance prediction."
+dependencies = [
+    "psutil",
+    "numpy",
+    "pandas",
+    "scikit-learn",
+    "xgboost",
+    "shap",
+    "typer",
+    "rich",
+    "textual",
+    "joblib",
+    "platformdirs",
+]
+
+[project.scripts]
+deskflow = "deskflow.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "mypy",
+    # type stubs
+    "pandas-stubs",
+    "types-psutil",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/deskflow"]
+
+[tool.ruff]
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+# E: pycodestyle errors, F: pyflakes, I: isort, B: flake8-bugbear,
+# UP: pyupgrade, SIM: flake8-simplify, PL: pylint
+select = ["E", "F", "I", "B", "UP", "SIM", "PL"]
+ignore = [
+    # PLR0913: too many arguments -- common in CLI/ML code
+    "PLR0913",
+    # PLR2004: magic value comparison -- acceptable in probe thresholds
+    "PLR2004",
+    # SIM108: ternary operator -- not always clearer
+    "SIM108",
+    # PLC0415: import not at top-level -- intentional in test_package.py to
+    # isolate each subpackage import into its own test case
+    "PLC0415",
+]
+
+[tool.mypy]
+strict = true
+mypy_path = "src"
+files = ["src"]
+# Modules that lack stubs and are not yet typed
+[[tool.mypy.overrides]]
+module = ["xgboost.*", "shap.*", "textual.*", "joblib.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: tests that call real system APIs (deselect with -m 'not integration')",
+]
+addopts = "--cov=deskflow --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["src/deskflow"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
