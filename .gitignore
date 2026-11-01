@@ -24,6 +24,8 @@ models/
 *.pkl
 *.joblib
 *.parquet
+*.manifest.json
+report*.md
 *.csv.gz
 
 # Coverage
