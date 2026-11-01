@@ -85,3 +85,14 @@ class PlatformAdapter(ABC):
     def process_snapshot(self) -> list[ProcessMeta] | None:
         """Return low-overhead system process snapshot, or None if unavailable."""
         return None
+
+    def is_trim_memory_supported(self) -> bool:
+        """Return True if the platform supports trimming process working sets."""
+        return False
+
+    def trim_process_memory(self, pid: int) -> bool:
+        """Trim working set memory for the specified process.
+
+        Returns True if successful, False otherwise.
+        """
+        return False

@@ -212,7 +212,19 @@ def train_command(
     df_test_preds["pred_anomaly_score"] = anom_scores
     df_test_preds["pred_is_anomaly"] = anom_scores >= anomaly_detector.threshold
 
-    # 9. Save Model Set Artifacts
+    # 9. Determine primary models via CV score on training split only
+    candidate_regs = [m for m in ("Ridge", "RandomForest", "XGBoost") if m in reg_cv]
+    primary_reg = min(candidate_regs, key=lambda m: reg_cv[m]) if candidate_regs else "XGBoost"
+
+    candidate_clfs = [m for m in ("LogisticRegression", "RandomForest", "XGBoost") if m in clf_cv]
+    primary_clf = max(candidate_clfs, key=lambda m: clf_cv[m]) if candidate_clfs else "XGBoost"
+
+    primary_models = {
+        "regressor": primary_reg,
+        "classifier": primary_clf,
+    }
+
+    # 10. Save Model Set Artifacts
     cv_metrics = {"regression": reg_cv, "classification": clf_cv}
     test_metrics = {
         "regression": reg_test_metrics,
@@ -232,6 +244,7 @@ def train_command(
         synthetic=synthetic,
         model_id=out_id,
         horizon_s=DEFAULT_HORIZON_S,
+        primary_models=primary_models,
     )
 
     # 10. Display Leaderboards

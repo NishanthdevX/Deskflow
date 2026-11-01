@@ -289,3 +289,23 @@ class WindowsAdapter(PlatformAdapter):
     def swap_memory(self) -> tuple[int, float] | None:
         """Low-overhead swap/pagefile status via GlobalMemoryStatusEx."""
         return _get_swap_status()
+
+    def is_trim_memory_supported(self) -> bool:
+        """Windows supports EmptyWorkingSet."""
+        return True
+
+    def trim_process_memory(self, pid: int) -> bool:
+        """Trim process working set using EmptyWorkingSet Win32 API."""
+        try:
+            # PROCESS_SET_QUOTA (0x0100) | PROCESS_QUERY_INFORMATION (0x0400)
+            desired_access = 0x0100 | 0x0400
+            handle = ctypes.windll.kernel32.OpenProcess(desired_access, False, wintypes.DWORD(pid))
+            if not handle:
+                return False
+            try:
+                res = ctypes.windll.psapi.EmptyWorkingSet(handle)
+                return bool(res != 0)
+            finally:
+                ctypes.windll.kernel32.CloseHandle(handle)
+        except Exception:
+            return False

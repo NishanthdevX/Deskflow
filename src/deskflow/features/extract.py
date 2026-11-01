@@ -73,6 +73,159 @@ def _resolve_issue_label(
     return label
 
 
+def build_row(
+    records_up_to_t: list[Record],
+    baseline: Baseline,
+    current_record: Record | None = None,
+) -> dict[str, float]:
+    """Extract the canonical 27 features from records up to decision point t.
+
+    This function is the single source of truth for feature calculation, shared
+    between live scanning / inference and offline dataset building.
+
+    Args:
+        records_up_to_t: Telemetry records at or before decision point t.
+        baseline: Baseline calibration for the active power state.
+        current_record: The record at decision point t with a completed probe.
+            If None, the last record in records_up_to_t is used.
+
+    Returns:
+        Dictionary mapping all 27 canonical feature names to float values.
+    """
+    if current_record is None:
+        if not records_up_to_t:
+            raise ValueError("records_up_to_t cannot be empty when current_record is None")
+        current_record = records_up_to_t[-1]
+
+    if current_record.probe is None:
+        raise ValueError("current_record must contain a completed probe result")
+
+    t = current_record.sample.monotonic_s
+
+    # Filter to 12s window strictly at or before t
+    history_12s = [r for r in records_up_to_t if t - 12.0 <= r.sample.monotonic_s <= t]
+    history_6s = [r for r in history_12s if r.sample.monotonic_s >= t - 6.0]
+    ts_12s = [r.sample.monotonic_s for r in history_12s]
+
+    row: dict[str, float] = {}
+
+    # --- 1. CPU Features (6s and 12s) ---
+    cpu_means_6s = [r.sample.cpu_percent_mean for r in history_6s]
+    cpu_means_12s = [r.sample.cpu_percent_mean for r in history_12s]
+    row["cpu_percent_mean_mean_6s"] = compute_mean(cpu_means_6s)
+    row["cpu_percent_mean_mean_12s"] = compute_mean(cpu_means_12s)
+    row["cpu_percent_mean_max_12s"] = compute_max(cpu_means_12s)
+    row["cpu_percent_mean_slope_12s"] = compute_slope(ts_12s, cpu_means_12s)
+
+    # --- 2. CPU Frequency Ratios ---
+    freq_ratios: list[float] = []
+    for r in history_12s:
+        if (
+            r.sample.cpu_freq_reliable
+            and r.sample.cpu_freq_max_mhz
+            and r.sample.cpu_freq_max_mhz > 0
+            and r.sample.cpu_freq_current_mhz is not None
+        ):
+            freq_ratios.append(r.sample.cpu_freq_current_mhz / r.sample.cpu_freq_max_mhz)
+        else:
+            freq_ratios.append(float("nan"))
+    row["cpu_freq_ratio_mean_12s"] = compute_mean(freq_ratios)
+    row["cpu_freq_ratio_min_12s"] = compute_min(freq_ratios)
+
+    # --- 3. Memory Slope and Headroom ---
+    mem_pcts_12s = [r.sample.mem_percent for r in history_12s]
+    row["mem_percent_mean_12s"] = compute_mean(mem_pcts_12s)
+    row["mem_percent_slope_12s"] = compute_slope(ts_12s, mem_pcts_12s) * 60.0
+    row["mem_available_bytes"] = float(current_record.sample.mem_available_bytes)
+
+    # --- 4. Swap Utilization ---
+    row["swap_percent"] = float(current_record.sample.swap_percent)
+
+    # --- 5. Disk Throughput ---
+    disk_reads = [
+        (r.sample.disk_read_bytes_per_s / (1024**2))
+        if r.sample.disk_read_bytes_per_s is not None
+        else 0.0
+        for r in history_12s
+    ]
+    disk_writes = [
+        (r.sample.disk_write_bytes_per_s / (1024**2))
+        if r.sample.disk_write_bytes_per_s is not None
+        else 0.0
+        for r in history_12s
+    ]
+    row["disk_read_mb_s_mean_12s"] = compute_mean(disk_reads)
+    row["disk_write_mb_s_mean_12s"] = compute_mean(disk_writes)
+
+    # --- 6. Context Switches ---
+    ctx_list = [
+        r.sample.ctx_switches_per_s if r.sample.ctx_switches_per_s is not None else float("nan")
+        for r in history_12s
+    ]
+    row["ctx_switches_per_s_mean_12s"] = compute_mean(ctx_list)
+
+    # --- 7. Process and Thread Counts ---
+    row["process_count"] = float(current_record.sample.process_count)
+    row["thread_count"] = (
+        float(current_record.sample.thread_count)
+        if current_record.sample.thread_count is not None
+        else float("nan")
+    )
+
+    # --- 8. Battery Plugged Status ---
+    if current_record.sample.battery_plugged is True:
+        row["battery_plugged"] = 1.0
+    elif current_record.sample.battery_plugged is False:
+        row["battery_plugged"] = 0.0
+    else:
+        row["battery_plugged"] = float("nan")
+
+    # --- 9. Top-25 Process Metrics ---
+    top_procs = current_record.top_processes
+    tot_ram = current_record.sample.mem_total_bytes
+    if top_procs and tot_ram > 0:
+        top1_rss = max(p.rss_bytes for p in top_procs)
+        row["top1_rss_share"] = top1_rss / tot_ram
+        top1_cpu = max(p.cpu_percent for p in top_procs)
+        row["top1_cpu_percent"] = top1_cpu
+        busy_cnt = sum(1 for p in top_procs if p.cpu_percent > 20.0)
+        row["busy_process_count"] = float(busy_cnt)
+    else:
+        row["top1_rss_share"] = 0.0
+        row["top1_cpu_percent"] = 0.0
+        row["busy_process_count"] = 0.0
+
+    idle_apps = [
+        p for p in top_procs if not p.is_protected and p.cpu_percent < 1.0 and p.age_s > 600.0
+    ]
+    row["idle_app_rss_gb"] = sum(p.rss_bytes for p in idle_apps) / (1024**3)
+    row["idle_app_count"] = float(len(idle_apps))
+
+    # --- 10. Probe Ratios Relative to Active Baseline ---
+    cur_probe = current_record.probe
+    p_cpu_ratio = cur_probe.cpu_ns / max(1.0, baseline.cpu_ns)
+    p_mem_ratio = cur_probe.mem_ns / max(1.0, baseline.mem_ns)
+    p_disk_ratio = cur_probe.disk_ns / max(1.0, baseline.disk_ns)
+    p_tot_ratio = cur_probe.total_ns / max(1.0, baseline.total_ns)
+
+    row["probe_cpu_ratio"] = p_cpu_ratio
+    row["probe_mem_ratio"] = p_mem_ratio
+    row["probe_disk_ratio"] = p_disk_ratio
+    row["probe_total_ratio"] = p_tot_ratio
+
+    probes_12s = [
+        r.probe.total_ns / max(1.0, baseline.total_ns) for r in history_12s if r.probe is not None
+    ]
+    row["probe_total_ratio_mean_12s"] = compute_mean(probes_12s)
+
+    # --- 11. Throttling Signature ---
+    cpu_mean = row["cpu_percent_mean_mean_12s"]
+    cpu_factor = 1.0 - (cpu_mean / 100.0) if not math.isnan(cpu_mean) else 1.0
+    row["slow_while_idle"] = max(0.0, p_cpu_ratio - 1.0) * max(0.0, cpu_factor)
+
+    return row
+
+
 def extract_run_features(
     records: list[Record],
     baseline: Baseline | dict[str, Baseline | None],
@@ -216,127 +369,13 @@ def extract_run_features(
                     f"Run 'deskflow baseline calibrate' while on {row_state} power."
                 )
 
-        history_6s = [r for r in history_12s if r.sample.monotonic_s >= t - 6.0]
-        ts_12s = [r.sample.monotonic_s for r in history_12s]
-
-        row: dict[str, Any] = {}
-
-        # --- 1. CPU Features (6s and 12s) ---
-        cpu_means_6s = [r.sample.cpu_percent_mean for r in history_6s]
-        cpu_means_12s = [r.sample.cpu_percent_mean for r in history_12s]
-        row["cpu_percent_mean_mean_6s"] = compute_mean(cpu_means_6s)
-        row["cpu_percent_mean_mean_12s"] = compute_mean(cpu_means_12s)
-        row["cpu_percent_mean_max_12s"] = compute_max(cpu_means_12s)
-        row["cpu_percent_mean_slope_12s"] = compute_slope(ts_12s, cpu_means_12s)
-
-        # --- 2. CPU Frequency Ratios ---
-        freq_ratios: list[float] = []
-        for r in history_12s:
-            if (
-                r.sample.cpu_freq_reliable
-                and r.sample.cpu_freq_max_mhz
-                and r.sample.cpu_freq_max_mhz > 0
-                and r.sample.cpu_freq_current_mhz is not None
-            ):
-                freq_ratios.append(r.sample.cpu_freq_current_mhz / r.sample.cpu_freq_max_mhz)
-            else:
-                freq_ratios.append(float("nan"))
-        row["cpu_freq_ratio_mean_12s"] = compute_mean(freq_ratios)
-        row["cpu_freq_ratio_min_12s"] = compute_min(freq_ratios)
-
-        # --- 3. Memory Slope and Headroom ---
-        mem_pcts_12s = [r.sample.mem_percent for r in history_12s]
-        row["mem_percent_mean_12s"] = compute_mean(mem_pcts_12s)
-        row["mem_percent_slope_12s"] = compute_slope(ts_12s, mem_pcts_12s) * 60.0
-        row["mem_available_bytes"] = float(cur_rec.sample.mem_available_bytes)
-
-        # --- 4. Swap Utilization ---
-        row["swap_percent"] = float(cur_rec.sample.swap_percent)
-
-        # --- 5. Disk Throughput ---
-        disk_reads = [
-            (r.sample.disk_read_bytes_per_s / (1024**2))
-            if r.sample.disk_read_bytes_per_s is not None
-            else 0.0
-            for r in history_12s
-        ]
-        disk_writes = [
-            (r.sample.disk_write_bytes_per_s / (1024**2))
-            if r.sample.disk_write_bytes_per_s is not None
-            else 0.0
-            for r in history_12s
-        ]
-        row["disk_read_mb_s_mean_12s"] = compute_mean(disk_reads)
-        row["disk_write_mb_s_mean_12s"] = compute_mean(disk_writes)
-
-        # --- 6. Context Switches ---
-        ctx_list = [
-            r.sample.ctx_switches_per_s if r.sample.ctx_switches_per_s is not None else float("nan")
-            for r in history_12s
-        ]
-        row["ctx_switches_per_s_mean_12s"] = compute_mean(ctx_list)
-
-        # --- 7. Process and Thread Counts ---
-        row["process_count"] = float(cur_rec.sample.process_count)
-        row["thread_count"] = (
-            float(cur_rec.sample.thread_count)
-            if cur_rec.sample.thread_count is not None
-            else float("nan")
+        # Build the 27 canonical features via single source of truth
+        features = build_row(
+            records_up_to_t=history_12s,
+            baseline=active_baseline,
+            current_record=cur_rec,
         )
-
-        # --- 8. Battery Plugged Status ---
-        if cur_rec.sample.battery_plugged is True:
-            row["battery_plugged"] = 1.0
-        elif cur_rec.sample.battery_plugged is False:
-            row["battery_plugged"] = 0.0
-        else:
-            row["battery_plugged"] = float("nan")
-
-        # --- 9. Top-25 Process Metrics ---
-        top_procs = cur_rec.top_processes
-        tot_ram = cur_rec.sample.mem_total_bytes
-        if top_procs and tot_ram > 0:
-            top1_rss = max(p.rss_bytes for p in top_procs)
-            row["top1_rss_share"] = top1_rss / tot_ram
-            top1_cpu = max(p.cpu_percent for p in top_procs)
-            row["top1_cpu_percent"] = top1_cpu
-            busy_cnt = sum(1 for p in top_procs if p.cpu_percent > 20.0)
-            row["busy_process_count"] = float(busy_cnt)
-        else:
-            row["top1_rss_share"] = 0.0
-            row["top1_cpu_percent"] = 0.0
-            row["busy_process_count"] = 0.0
-
-        idle_apps = [
-            p for p in top_procs if not p.is_protected and p.cpu_percent < 1.0 and p.age_s > 600.0
-        ]
-        row["idle_app_rss_gb"] = sum(p.rss_bytes for p in idle_apps) / (1024**3)
-        row["idle_app_count"] = float(len(idle_apps))
-
-        # --- 10. Probe Ratios Relative to Active Baseline ---
-        cur_probe = cur_rec.probe
-        assert cur_probe is not None
-        p_cpu_ratio = cur_probe.cpu_ns / max(1.0, active_baseline.cpu_ns)
-        p_mem_ratio = cur_probe.mem_ns / max(1.0, active_baseline.mem_ns)
-        p_disk_ratio = cur_probe.disk_ns / max(1.0, active_baseline.disk_ns)
-        p_tot_ratio = cur_probe.total_ns / max(1.0, active_baseline.total_ns)
-
-        row["probe_cpu_ratio"] = p_cpu_ratio
-        row["probe_mem_ratio"] = p_mem_ratio
-        row["probe_disk_ratio"] = p_disk_ratio
-        row["probe_total_ratio"] = p_tot_ratio
-
-        probes_12s = [
-            r.probe.total_ns / max(1.0, active_baseline.total_ns)
-            for r in history_12s
-            if r.probe is not None
-        ]
-        row["probe_total_ratio_mean_12s"] = compute_mean(probes_12s)
-
-        # --- 11. Throttling Signature ---
-        cpu_mean = row["cpu_percent_mean_mean_12s"]
-        cpu_factor = 1.0 - (cpu_mean / 100.0) if not math.isnan(cpu_mean) else 1.0
-        row["slow_while_idle"] = max(0.0, p_cpu_ratio - 1.0) * max(0.0, cpu_factor)
+        row: dict[str, Any] = dict(features)
 
         # --- Targets at horizon_s ---
         target_tot_ratio = target_probe.total_ns / max(1.0, active_baseline.total_ns)

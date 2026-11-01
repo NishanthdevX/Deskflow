@@ -1,0 +1,511 @@
+"""Scan CLI command: measured system scan, primary model scoring, and health assessment."""
+
+import json
+import logging
+import time
+from pathlib import Path
+
+import typer
+from rich.console import Console
+from rich.panel import Panel
+from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
+from rich.table import Table
+
+from deskflow.baseline import (
+    calibrate_baseline,
+    get_current_power_state,
+    load_baseline,
+    save_baseline,
+)
+from deskflow.collector.models import Record
+from deskflow.collector.probe import run_probe
+from deskflow.collector.sampler import Sampler
+from deskflow.collector.storage import StorageScanner
+from deskflow.features.extract import build_row
+from deskflow.features.registry import DEFAULT_HORIZON_S, FEATURE_SPECS
+from deskflow.health.score import compute_health_score
+from deskflow.ml.artifacts import get_latest_model_id, load_model_card
+from deskflow.paths import get_data_dir
+from deskflow.platform.factory import get_adapter
+from deskflow.remediation.recommend import recommend_fixes
+
+FEATURE_MAP = {spec.name: spec for spec in FEATURE_SPECS}
+
+logger = logging.getLogger(__name__)
+console = Console()
+
+
+def scan_command(
+    seconds: int = typer.Option(
+        14,
+        "--seconds",
+        "-s",
+        help="Measuring duration in seconds (default 14, min 13).",
+    ),
+    output_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Output raw structured JSON schema instead of human-readable tables.",
+    ),
+    no_storage: bool = typer.Option(
+        False,
+        "--no-storage",
+        help="Skip filesystem storage scan stage.",
+    ),
+    timing: bool = typer.Option(
+        False,
+        "--timing",
+        help="Print detailed latency breakdown per stage.",
+    ),
+    replay: Path | None = typer.Option(
+        None,
+        "--replay",
+        help="Replay a previously recorded run JSONL file instead of live measuring.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Automatically confirm any required baseline calibration.",
+    ),
+) -> None:
+    """Run an end-to-end device scan, evaluate health score, and recommend fixes."""
+    import numpy as np
+
+    adapter = get_adapter()
+    total_start = time.perf_counter()
+    measuring_s = 0.0
+    storage_s = 0.0
+
+    # 1. Resolve Power State and Baseline
+    power_state = get_current_power_state(adapter)
+    try:
+        baseline = load_baseline(power_state=power_state)
+    except FileNotFoundError:
+        baseline = None
+
+    if baseline is None:
+        if not output_json:
+            console.print(
+                f"[yellow]Baseline calibration for power state '{power_state}' not found.[/yellow]"
+            )
+        if not yes:
+            confirmed = typer.confirm(
+                f"Calibrate a 40-second baseline for {power_state} power now?",
+                default=True,
+            )
+            if not confirmed:
+                console.print("[red]Scan aborted: baseline required.[/red]")
+                raise typer.Exit(code=1)
+        if not output_json:
+            console.print("[cyan]Running 40-second baseline calibration...[/cyan]")
+        baseline = calibrate_baseline(
+            duration_s=40.0,
+            interval_s=2.0,
+        )
+        save_baseline(baseline, power_state=power_state)
+        if not output_json:
+            console.print("[green]Baseline calibration complete and saved.[/green]")
+
+    # 2. Acquire Telemetry Records
+    records: list[Record] = []
+
+    if replay is not None:
+        # Replay mode: load existing records from JSONL file
+        if not replay.exists():
+            console.print(f"[red]Error: Replay file not found: {replay}[/red]")
+            raise typer.Exit(code=1)
+        with open(replay, encoding="utf-8") as f:
+            for line in f:
+                line_str = line.strip()
+                if line_str:
+                    records.append(Record.from_dict(json.loads(line_str)))
+        if not records:
+            console.print("[red]Error: Replay file contained no records.[/red]")
+            raise typer.Exit(code=1)
+    else:
+        # Live Measuring
+        # Enforce no sklearn / xgboost imports during this block!
+        scan_seconds = max(13, seconds)
+        sampler = Sampler(adapter=adapter, interval_s=2.0, process_interval_s=10.0)
+
+        t_meas_start = time.perf_counter()
+        data_dir = get_data_dir()
+        sample_interval = 2.0
+        probe_interval = 4.0
+        last_probe_mono = -999.0
+
+        if output_json:
+            # Silent live loop
+            mono_start = time.monotonic()
+            while (time.monotonic() - mono_start) < scan_seconds:
+                t_loop_start = time.monotonic()
+                sys_sample, top_procs = sampler.sample()
+                probe_res = None
+                if (sys_sample.monotonic_s - last_probe_mono) >= (probe_interval - 0.2):
+                    probe_res = run_probe(data_dir=data_dir, repeats=3)
+                    last_probe_mono = sys_sample.monotonic_s
+                rec = Record(
+                    schema_version=1,
+                    run_id="scan-live",
+                    label="idle",
+                    sample=sys_sample,
+                    probe=probe_res,
+                    top_processes=top_procs,
+                    storage=None,
+                )
+                records.append(rec)
+                elapsed = time.monotonic() - t_loop_start
+                sleep_s = max(0.05, sample_interval - elapsed)
+                time.sleep(sleep_s)
+        else:
+            with Progress(
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TimeRemainingColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task(
+                    "Measuring system telemetry and probes...", total=scan_seconds
+                )
+                mono_start = time.monotonic()
+                while (time.monotonic() - mono_start) < scan_seconds:
+                    t_loop_start = time.monotonic()
+                    sys_sample, top_procs = sampler.sample()
+                    probe_res = None
+                    if (sys_sample.monotonic_s - last_probe_mono) >= (probe_interval - 0.2):
+                        probe_res = run_probe(data_dir=data_dir, repeats=3)
+                        last_probe_mono = sys_sample.monotonic_s
+                    rec = Record(
+                        schema_version=1,
+                        run_id="scan-live",
+                        label="idle",
+                        sample=sys_sample,
+                        probe=probe_res,
+                        top_processes=top_procs,
+                        storage=None,
+                    )
+                    records.append(rec)
+                    spent = time.monotonic() - mono_start
+                    progress.update(task, completed=min(scan_seconds, spent))
+                    loop_spent = time.monotonic() - t_loop_start
+                    sleep_s = max(0.05, sample_interval - loop_spent)
+                    time.sleep(sleep_s)
+
+        measuring_s = time.perf_counter() - t_meas_start
+
+    # Ensure at least one probe was completed
+    probe_records = [r for r in records if r.probe is not None]
+    if not probe_records:
+        console.print("[red]Error: No valid probe records collected during scan.[/red]")
+        raise typer.Exit(code=1)
+
+    cur_rec = probe_records[-1]
+
+    # 3. Storage Scan (budget 3s, skippable)
+    storage_report = None
+    if not no_storage:
+        t_store_start = time.perf_counter()
+        scanner = StorageScanner(adapter=adapter, time_budget_s=3.0)
+        storage_report = scanner.scan()
+        storage_s = time.perf_counter() - t_store_start
+
+    # 4. Load Models and Predict (ML imports occur now after measuring)
+    t_model_start = time.perf_counter()
+    from deskflow.ml.explain import top_contributors
+    from deskflow.ml.runtime import RuntimeModels
+
+    latest_id = get_latest_model_id()
+    if latest_id is None:
+        console.print("[red]Error: No trained model set found. Run 'deskflow train' first.[/red]")
+        raise typer.Exit(code=1)
+
+    model_dir = get_data_dir() / "models" / latest_id
+    card = load_model_card(model_dir)
+    runtime = RuntimeModels.load(model_dir)
+    model_load_s = time.perf_counter() - t_model_start
+
+    # 5. Feature Extraction and Prediction
+    t_infer_start = time.perf_counter()
+    features_dict = build_row(
+        records_up_to_t=records,
+        baseline=baseline,
+        current_record=cur_rec,
+    )
+    feature_vector = np.array(
+        [features_dict[name] for name in runtime.feature_order],
+        dtype=np.float64,
+    )
+
+    preds = runtime.predict(feature_vector)
+
+    # Resolve primary models
+    primary_models = card.get(
+        "primary_models",
+        {"regressor": "XGBoost", "classifier": "XGBoost"},
+    )
+    primary_reg = primary_models.get("regressor", "XGBoost")
+    primary_clf = primary_models.get("classifier", "XGBoost")
+
+    # Regression result
+    slowdown_preds = preds.get("slowdown_ratio", {})
+    predicted_ratio = float(slowdown_preds.get(primary_reg, slowdown_preds.get("XGBoost", 1.0)))
+
+    # Health score
+    score, health_label = compute_health_score(predicted_ratio)
+
+    # Classification result
+    clf_probs = preds.get("issue_probabilities", {}).get(primary_clf, {})
+    if clf_probs:
+        best_class = max(clf_probs.keys(), key=lambda c: clf_probs[c])
+        best_prob = float(clf_probs[best_class])
+        if best_prob >= 0.5:
+            issue_tag = best_class
+            confidence = best_prob
+        else:
+            issue_tag = "none"
+            confidence = 0.0
+    else:
+        issue_tag = "healthy"
+        confidence = 1.0
+
+    # Anomaly detector result
+    anomaly_dict = preds.get("anomaly", {})
+    is_anomaly = bool(anomaly_dict.get("is_anomaly", False))
+    anomaly_score = float(anomaly_dict.get("score", 0.0))
+
+    # Top-3 TreeSHAP contributors for reasons
+    reasons: list[str] = []
+    if runtime.xgb_reg is not None:
+        try:
+            top_feats = top_contributors(
+                feature_vector,
+                runtime.xgb_reg,
+                feature_names=runtime.feature_order,
+                k=3,
+            )
+            for f_name, shap_val in top_feats:
+                spec = FEATURE_MAP.get(f_name)
+                desc = spec.description if spec else f_name
+                sign = "+" if shap_val > 0 else ""
+                reasons.append(f"{desc} ({sign}{shap_val:.2f})")
+        except Exception:
+            reasons = [f"Slowdown ratio {predicted_ratio:.2f} relative to baseline"]
+    else:
+        reasons = [f"Slowdown ratio {predicted_ratio:.2f} relative to baseline"]
+
+    # Recommendations
+    recs = recommend_fixes(
+        top_processes=cur_rec.top_processes,
+        storage_report=storage_report,
+        issue_tag=issue_tag,
+        is_anomaly=is_anomaly,
+        adapter=adapter,
+    )
+
+    infer_s = time.perf_counter() - t_infer_start
+    total_s = time.perf_counter() - total_start
+
+    # Categories assessment
+    # 1. Performance: ML Score
+    perf_status = health_label
+
+    # 2. Memory: Headroom and Available %
+    tot_ram = cur_rec.sample.mem_total_bytes
+    avail_ram = cur_rec.sample.mem_available_bytes
+    mem_avail_pct = (avail_ram / tot_ram * 100.0) if tot_ram > 0 else 0.0
+    headroom_gb = avail_ram / (1024**3)
+    if mem_avail_pct >= 25.0:
+        mem_status = "Good"
+    elif mem_avail_pct >= 15.0:
+        mem_status = "Fair"
+    else:
+        mem_status = "Poor"
+
+    # 3. Storage: Cleanable bytes
+    cleanable_bytes = 0
+    if storage_report and storage_report.entries:
+        safe_roots = {
+            loc.path.lower() for loc in adapter.temp_and_cache_dirs() if loc.safe_to_clean
+        }
+        for entry in storage_report.entries:
+            if entry.kind in ("temp", "cache") and entry.path.lower() in safe_roots:
+                cleanable_bytes += entry.bytes
+    cleanable_gb = cleanable_bytes / (1024**3)
+    if cleanable_gb < 2.0:
+        storage_status = "Good"
+    elif cleanable_gb < 10.0:
+        storage_status = "Fair"
+    else:
+        storage_status = "Poor"
+
+    # 4. Background Apps: Idle app count and RSS
+    idle_apps = [
+        p
+        for p in cur_rec.top_processes
+        if not p.is_protected and p.cpu_percent < 1.0 and p.age_s > 600.0 and p.pid > 4
+    ]
+    idle_count = len(idle_apps)
+    idle_rss_gb = sum(p.rss_bytes for p in idle_apps) / (1024**3)
+    if idle_rss_gb < 1.0:
+        apps_status = "Good"
+    elif idle_rss_gb < 3.0:
+        apps_status = "Fair"
+    else:
+        apps_status = "Poor"
+
+    # 6. JSON Output Mode
+    if output_json:
+        result_payload = {
+            "machine_id": baseline.machine_id,
+            "power_state": power_state,
+            "scan_duration_s": round(total_s, 2),
+            "synthetic_model": bool(card.get("synthetic", False)),
+            "health": {
+                "score": score,
+                "label": health_label,
+                "predicted_slowdown_ratio": round(predicted_ratio, 3),
+                "horizon_s": DEFAULT_HORIZON_S,
+            },
+            "issue": {
+                "tag": issue_tag,
+                "confidence": round(confidence, 3),
+                "anomaly": is_anomaly,
+                "anomaly_score": round(anomaly_score, 4),
+            },
+            "reasons": reasons,
+            "categories": {
+                "performance": {
+                    "status": perf_status,
+                    "score": score,
+                    "is_ml": True,
+                },
+                "memory": {
+                    "status": mem_status,
+                    "available_gb": round(headroom_gb, 2),
+                    "available_percent": round(mem_avail_pct, 1),
+                    "is_ml": False,
+                },
+                "storage": {
+                    "status": storage_status,
+                    "cleanable_gb": round(cleanable_gb, 2),
+                    "is_ml": False,
+                },
+                "background_apps": {
+                    "status": apps_status,
+                    "idle_count": idle_count,
+                    "idle_rss_gb": round(idle_rss_gb, 2),
+                    "is_ml": False,
+                },
+            },
+            "recommendations": [
+                {
+                    "action_id": r.action_id,
+                    "title": r.title,
+                    "description": r.description,
+                    "evidence": r.evidence,
+                    "warning": r.warning,
+                }
+                for r in recs
+            ],
+            "timings": {
+                "measuring_s": round(measuring_s, 2),
+                "storage_s": round(storage_s, 2),
+                "model_load_s": round(model_load_s, 2),
+                "inference_s": round(infer_s, 4),
+                "total_s": round(total_s, 2),
+            },
+        }
+        print(json.dumps(result_payload, indent=2))
+        return
+
+    # 7. Human-readable CLI Output (Compact, no emojis, 80 columns)
+    if card.get("synthetic"):
+        console.print(
+            Panel.fit(
+                "DEMO MODEL trained on synthetic data",
+                style="bold yellow",
+            )
+        )
+
+    # Title line
+    console.print(
+        f"[bold]Deskflow Scan[/bold] - Machine: {baseline.machine_id[:8]}... | Power: {power_state}"
+    )
+
+    # Health score
+    color_map = {"Good": "green", "Fair": "yellow", "Poor": "red"}
+    s_color = color_map.get(health_label, "white")
+    console.print(
+        f"Health Score: [{s_color}]{score}/100 ({health_label})[/{s_color}] | "
+        f"Predicted Slowdown (in 20s): {predicted_ratio:.2f}x baseline"
+    )
+
+    # Issue tag & anomaly
+    conf_str = f" (confidence: {confidence:.0%})" if issue_tag != "none" else ""
+    anom_str = "[red]Yes[/red]" if is_anomaly else "[green]No[/green]"
+    console.print(f"Issue Tag: [bold]{issue_tag}[/bold]{conf_str} | Anomaly: {anom_str}")
+
+    # Reasons
+    console.print("\n[bold]Top Contributing Factors:[/bold]")
+    for r in reasons:
+        console.print(f"  - {r}")
+
+    # Category Table
+    table_cat = Table(title="\nSystem Categories", show_header=True)
+    table_cat.add_column("Category", style="bold", width=18)
+    table_cat.add_column("Status", width=10)
+    table_cat.add_column("Details")
+
+    table_cat.add_row(
+        "Performance",
+        f"[{color_map.get(perf_status, 'white')}]{perf_status}[/]",
+        f"{score}/100 (ML predicted slowdown {predicted_ratio:.2f}x)",
+    )
+    table_cat.add_row(
+        "Memory",
+        f"[{color_map.get(mem_status, 'white')}]{mem_status}[/]",
+        f"{headroom_gb:.1f} GB ({mem_avail_pct:.0f}% free)",
+    )
+    storage_desc = (
+        f"{cleanable_gb:.1f} GB cleanable temp/cache"
+        if not no_storage
+        else "Skipped (--no-storage)"
+    )
+    table_cat.add_row(
+        "Storage",
+        f"[{color_map.get(storage_status, 'white')}]{storage_status}[/]",
+        storage_desc,
+    )
+    table_cat.add_row(
+        "Background apps",
+        f"[{color_map.get(apps_status, 'white')}]{apps_status}[/]",
+        f"{idle_count} idle apps ({idle_rss_gb:.1f} GB RAM)",
+    )
+    console.print(table_cat)
+
+    # Recommended Fixes
+    if recs:
+        console.print("\n[bold]Recommended Fixes:[/bold]")
+        for idx, rec_action in enumerate(recs, start=1):
+            warn_str = (
+                f" [yellow](Warning: {rec_action.warning})[/yellow]" if rec_action.warning else ""
+            )
+            console.print(
+                f"  {idx}. [bold]{rec_action.title}[/bold]: {rec_action.evidence}.{warn_str}"
+            )
+    else:
+        console.print("\n[dim]No fixes needed. System running within normal parameters.[/dim]")
+
+    # Footer
+    footer_note = (
+        "Only Performance and Issue Tag are ML-derived; other categories are direct measurements."
+    )
+    console.print(f"\n[dim]Scan completed in {total_s:.1f}s. {footer_note}[/dim]")
+
+    if timing:
+        t_str = (
+            f"Measuring {measuring_s:.2f}s | Storage {storage_s:.2f}s | "
+            f"Model Load {model_load_s:.2f}s | Inference {infer_s:.4f}s | Total {total_s:.2f}s"
+        )
+        console.print(f"[dim]Timings: {t_str}[/dim]")

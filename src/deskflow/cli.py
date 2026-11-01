@@ -102,6 +102,98 @@ def evaluate(
     )
 
 
+@app.command(
+    "scan",
+    help="Sample system telemetry, evaluate ML models, compute health score, and suggest fixes.",
+)
+def scan(
+    seconds: int = typer.Option(
+        14,
+        "--seconds",
+        "-s",
+        help="Measuring duration in seconds (default 14, min 13).",
+    ),
+    json: bool = typer.Option(
+        False,
+        "--json",
+        help="Output raw structured JSON schema instead of human-readable tables.",
+    ),
+    no_storage: bool = typer.Option(
+        False,
+        "--no-storage",
+        help="Skip filesystem storage scan stage.",
+    ),
+    timing: bool = typer.Option(
+        False,
+        "--timing",
+        help="Print detailed latency breakdown per stage.",
+    ),
+    replay: str | None = typer.Option(
+        None,
+        "--replay",
+        help="Replay a previously recorded run JSONL file instead of live measuring.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Automatically confirm any required baseline calibration.",
+    ),
+) -> None:
+    """Run an end-to-end device scan, evaluate health score, and recommend fixes."""
+    from pathlib import Path
+
+    from deskflow.commands.scan import scan_command
+
+    scan_command(
+        seconds=seconds,
+        output_json=json,
+        no_storage=no_storage,
+        timing=timing,
+        replay=Path(replay) if replay else None,
+        yes=yes,
+    )
+
+
+@app.command(
+    "fix",
+    help="Execute safe, user-confirmed remediation actions and verify impact with re-scan.",
+)
+def fix(
+    action: list[str] = typer.Option(
+        None,
+        "--action",
+        "-a",
+        help="One or more actions to execute directly (clean_temp, close_idle_apps, trim_memory).",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Simulate actions and print expected impact without making changes.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Bypass interactive selection and confirmation prompts.",
+    ),
+    no_rescan: bool = typer.Option(
+        False,
+        "--no-rescan",
+        help="Skip post-fix verification scan.",
+    ),
+) -> None:
+    """Execute safe remediation actions and verify impact with re-scan."""
+    from deskflow.commands.fix import fix_command
+
+    fix_command(
+        actions=action,
+        dry_run=dry_run,
+        yes=yes,
+        no_rescan=no_rescan,
+    )
+
+
 def _version_callback(value: bool) -> None:
     """Print version and exit when --version is passed."""
     if value:

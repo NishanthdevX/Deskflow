@@ -6,7 +6,7 @@ from deskflow.features.builder import (
     merge_datasets,
     validate_dataset,
 )
-from deskflow.features.extract import extract_run_features
+from deskflow.features.extract import build_row, extract_run_features
 from deskflow.features.registry import (
     FEATURE_NAME_SET,
     FEATURE_NAMES,
@@ -24,6 +24,7 @@ __all__ = [
     "FeatureSpec",
     "assign_splits",
     "build_dataset",
+    "build_row",
     "describe_dataset",
     "extract_run_features",
     "merge_datasets",

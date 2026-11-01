@@ -12,7 +12,7 @@ offers safe fixes, and re-measures after a fix.
 It is also a college ML project: model training, offline evaluation, and live accuracy
 comparison are first-class features.
 
-Status: Phase 3 complete (Feature Set v2, regression and classification models, anomaly detection, offline evaluation, and runtime artifacts).
+Status: Phase 4 complete (Scan, deterministic 0-100 health score, safe remediation, and post-fix re-validation).
 
 ## Installation
 
@@ -142,6 +142,39 @@ deskflow models list
 
 # Inspect detailed model card, thresholds, and test performance
 deskflow models show latest
+```
+
+### System Scan & Health Assessment (`scan`)
+
+Measure live telemetry and performance probes, evaluate trained ML models, compute health score, and diagnose issues:
+
+```bash
+# Live 14-second scan
+deskflow scan
+
+# Scan with timing latency breakdown
+deskflow scan --timing
+
+# Replay a recorded JSONL run
+deskflow scan --replay run.jsonl
+
+# Output structured JSON schema
+deskflow scan --json
+```
+
+### Remediation & Post-Fix Verification (`fix`)
+
+Execute user-confirmed safe remediation actions and re-scan system to verify performance improvements:
+
+```bash
+# Preview actions without making changes
+deskflow fix --dry-run
+
+# Interactive selection and execution
+deskflow fix
+
+# Execute specific action directly
+deskflow fix --action clean_temp --yes
 ```
 
 ## How it works

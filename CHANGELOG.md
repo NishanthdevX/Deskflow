@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0.dev3] - 2026-11-01
+
+### Added
+- Feature Set v2 with 27 canonical features, 6s and 12s rolling windows, 12s warm-up rule, and 20s prediction horizon.
+- Lightweight regression models (Ridge, RandomForest, XGBoost) and baselines (ConstantMedian, Persistence, RollingMean).
+- Multi-class issue classifiers (LogisticRegression, RandomForest, XGBoost) and Dummy baseline.
+- Anomaly detection via Isolation Forest trained on healthy data with 99th percentile thresholding.
+- Fast runtime inference (`RuntimeModels`) with sub-50ms latency and TreeSHAP explainability.
+- CLI training (`deskflow train`), offline evaluation (`deskflow evaluate`), and model management (`deskflow models`).
+- Live system scanning (`deskflow scan`) with 14-second measuring, lazy ML imports, and rich progress display.
+- Deterministic 0-100 health score derived from predicted slowdown ratio vs baseline.
+- Categories evaluation: Performance (ML), Memory, Storage, and Background Apps with direct measurements.
+- Remediation engine (`src/deskflow/remediation/`) supporting `clean_temp`, `close_idle_apps`, `end_busy_process`, and `trim_memory` (Windows `EmptyWorkingSet`).
+- Post-fix verification re-scan, before/after impact comparison table, and audit logging to `fixlog.jsonl`.
+- Parity test guaranteeing identical feature vectors between live scanning and dataset building.
+
 ## [0.1.0.dev2] - 2026-11-01
 
 ### Added

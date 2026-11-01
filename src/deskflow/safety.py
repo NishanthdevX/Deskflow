@@ -37,7 +37,7 @@ def _get_current_username() -> str:
 def is_protected(
     name: str,
     pid: int,
-    username: str | None,
+    username: str | None = None,
     current_pid: int | None = None,
     current_user: str | None = None,
     parent_pids: Set[int] | None = None,

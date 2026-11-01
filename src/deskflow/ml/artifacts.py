@@ -47,6 +47,7 @@ def save_model_set(
     model_id: str | None = None,
     models_root: Path | None = None,
     horizon_s: float = DEFAULT_HORIZON_S,
+    primary_models: dict[str, str] | None = None,
 ) -> Path:
     """Serialize all runtime-ready models, cards, and predictions to user_data_dir."""
     root = models_root or (get_data_dir() / "models")
@@ -57,15 +58,15 @@ def save_model_set(
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. XGBoost Regressor (native .ubj)
-    if "XGBoost" in regressors:
+    if "XGBoost" in regressors and hasattr(regressors["XGBoost"], "save_model"):
         regressors["XGBoost"].save_model(dest_dir / "regressor_xgb.ubj")
 
     # 2. XGBoost Classifier (native .ubj)
-    if "XGBoost" in classifiers:
+    if "XGBoost" in classifiers and hasattr(classifiers["XGBoost"], "save_model"):
         classifiers["XGBoost"].save_model(dest_dir / "classifier_xgb.ubj")
 
     # 3. Ridge Regressor (JSON format with coefficients and scaler params)
-    if "Ridge" in regressors:
+    if "Ridge" in regressors and hasattr(regressors["Ridge"], "named_steps"):
         ridge_pipe = regressors["Ridge"]
         # Extract steps
         imputer = ridge_pipe.named_steps.get("imputer")
@@ -115,6 +116,11 @@ def save_model_set(
         "thresholds": {
             "slow_threshold": SLOW_THRESHOLD,
             "anomaly_threshold": round(float(anomaly_detector.threshold), 4),
+        },
+        "primary_models": primary_models
+        or {
+            "regressor": "XGBoost" if "XGBoost" in regressors else "Ridge",
+            "classifier": "XGBoost" if "XGBoost" in classifiers else "LogisticRegression",
         },
         "dataset_sha256": dataset_sha256,
         "seeds": {"random_state": 42},
