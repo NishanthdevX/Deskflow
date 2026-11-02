@@ -96,3 +96,23 @@ class PlatformAdapter(ABC):
         Returns True if successful, False otherwise.
         """
         return False
+
+    def get_window_owning_pids(self) -> set[int]:
+        """Return process IDs that own at least one visible top-level titled window."""
+        return set()
+
+    def get_foreground_pid(self) -> int | None:
+        """Return the process ID owning the currently active foreground window, or None."""
+        return None
+
+    def close_process_windows(self, pid: int, timeout_s: float = 8.0) -> bool:
+        """Post a graceful close message (e.g. WM_CLOSE or AppleScript quit) to process windows.
+
+        Waits up to timeout_s for the process to terminate.
+        Returns True if the process exited within timeout_s, False otherwise.
+        """
+        return False
+
+    def never_offer_names(self) -> frozenset[str]:
+        """Return lowercase set of process names that must never be offered for termination."""
+        return frozenset()

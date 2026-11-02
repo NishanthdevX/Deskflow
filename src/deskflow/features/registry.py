@@ -16,24 +16,39 @@ class FeatureSpec:
     unit: str
     window: str | None
     description: str
+    plain: str
 
 
 # Canonical registry of all features for FEATURE_SET_VERSION = 2 (max 30 features)
 FEATURE_SPECS: list[FeatureSpec] = [
     # 1. CPU Utilization across short windows (6s and 12s)
-    FeatureSpec("cpu_percent_mean_mean_6s", "%", "6s", "Mean CPU utilization over 6s window."),
-    FeatureSpec("cpu_percent_mean_mean_12s", "%", "12s", "Mean CPU utilization over 12s window."),
+    FeatureSpec(
+        "cpu_percent_mean_mean_6s",
+        "%",
+        "6s",
+        "Mean CPU utilization over 6s window.",
+        "CPU busy",
+    ),
+    FeatureSpec(
+        "cpu_percent_mean_mean_12s",
+        "%",
+        "12s",
+        "Mean CPU utilization over 12s window.",
+        "sustained CPU load",
+    ),
     FeatureSpec(
         "cpu_percent_mean_max_12s",
         "%",
         "12s",
         "Maximum single-tick CPU utilization over 12s window.",
+        "CPU utilization spike",
     ),
     FeatureSpec(
         "cpu_percent_mean_slope_12s",
         "%/s",
         "12s",
         "Least-squares slope of CPU utilization over 12s window.",
+        "rapidly rising CPU usage",
     ),
     # 2. CPU Frequency ratio (throttling indicators)
     FeatureSpec(
@@ -41,37 +56,59 @@ FEATURE_SPECS: list[FeatureSpec] = [
         "ratio",
         "12s",
         "Mean CPU frequency ratio (current/max) over 12s window.",
+        "CPU frequency throttling",
     ),
     FeatureSpec(
-        "cpu_freq_ratio_min_12s", "ratio", "12s", "Minimum CPU frequency ratio over 12s window."
+        "cpu_freq_ratio_min_12s",
+        "ratio",
+        "12s",
+        "Minimum CPU frequency ratio over 12s window.",
+        "severe CPU clock throttling dip",
     ),
     # 3. Memory slope and headroom
     FeatureSpec(
-        "mem_percent_mean_12s", "%", "12s", "Mean RAM utilization percentage over 12s window."
+        "mem_percent_mean_12s",
+        "%",
+        "12s",
+        "Mean RAM utilization percentage over 12s window.",
+        "high memory pressure",
     ),
     FeatureSpec(
-        "mem_percent_slope_12s", "%/s", "12s", "Least-squares slope of RAM percent over 12s window."
+        "mem_percent_slope_12s",
+        "%/s",
+        "12s",
+        "Least-squares slope of RAM percent over 12s window.",
+        "memory filling up",
     ),
     FeatureSpec(
         "mem_available_bytes",
         "bytes",
         None,
         "Instantaneous available physical memory headroom in bytes.",
+        "low available memory headroom",
     ),
     # 4. Swap utilization
-    FeatureSpec("swap_percent", "%", None, "Instantaneous swap/pagefile utilization percent."),
+    FeatureSpec(
+        "swap_percent",
+        "%",
+        None,
+        "Instantaneous swap/pagefile utilization percent.",
+        "high swap/pagefile usage",
+    ),
     # 5. Disk throughput
     FeatureSpec(
         "disk_read_mb_s_mean_12s",
         "MB/s",
         "12s",
         "Mean disk read throughput in MB/s over 12s window.",
+        "heavy disk read throughput",
     ),
     FeatureSpec(
         "disk_write_mb_s_mean_12s",
         "MB/s",
         "12s",
         "Mean disk write throughput in MB/s over 12s window.",
+        "heavy disk write throughput",
     ),
     # 6. Context switches
     FeatureSpec(
@@ -79,55 +116,102 @@ FEATURE_SPECS: list[FeatureSpec] = [
         "ops/s",
         "12s",
         "Mean OS context switch rate over 12s window.",
+        "elevated OS context switching",
     ),
     # 7. Process and thread counts
-    FeatureSpec("process_count", "count", None, "System-wide total process count at time t."),
-    FeatureSpec("thread_count", "count", None, "System-wide total thread count at time t."),
+    FeatureSpec(
+        "process_count",
+        "count",
+        None,
+        "System-wide total process count at time t.",
+        "many background processes",
+    ),
+    FeatureSpec(
+        "thread_count",
+        "count",
+        None,
+        "System-wide total thread count at time t.",
+        "elevated system thread count",
+    ),
     # 8. Power state indicator
     FeatureSpec(
         "battery_plugged",
         "flag",
         None,
         "Device connected to external AC power (1.0 = yes, 0.0 = no).",
+        "running on battery power",
     ),
     # 9. Top-25 process features (evaluated over top 25 processes sorted by RSS)
     FeatureSpec(
-        "top1_rss_share", "ratio", None, "Largest single process RSS divided by total system RAM."
+        "top1_rss_share",
+        "ratio",
+        None,
+        "Largest single process RSS divided by total system RAM.",
+        "single application consuming majority of RAM",
     ),
     FeatureSpec(
-        "top1_cpu_percent", "%", None, "Peak CPU utilization percent among top 25 processes."
+        "top1_cpu_percent",
+        "%",
+        None,
+        "Peak CPU utilization percent among top 25 processes.",
+        "single process dominating CPU",
     ),
     FeatureSpec(
-        "busy_process_count", "count", None, "Count of top 25 processes with cpu_percent > 20%."
+        "busy_process_count",
+        "count",
+        None,
+        "Count of top 25 processes with cpu_percent > 20%.",
+        "multiple busy processes active",
     ),
     FeatureSpec(
-        "idle_app_rss_gb", "GB", None, "Total RSS in GB of non-protected idle applications."
+        "idle_app_rss_gb",
+        "GB",
+        None,
+        "Total RSS in GB of non-protected idle applications.",
+        "idle applications holding large RAM",
     ),
-    FeatureSpec("idle_app_count", "count", None, "Count of non-protected idle applications."),
+    FeatureSpec(
+        "idle_app_count",
+        "count",
+        None,
+        "Count of non-protected idle applications.",
+        "many idle background applications",
+    ),
     # 10. Probe latency ratios relative to active power-state baseline
     FeatureSpec(
-        "probe_cpu_ratio", "ratio", None, "CPU probe latency divided by baseline CPU median at t."
+        "probe_cpu_ratio",
+        "ratio",
+        None,
+        "CPU probe latency divided by baseline CPU median at t.",
+        "CPU probe slower than usual",
     ),
     FeatureSpec(
         "probe_mem_ratio",
         "ratio",
         None,
         "Memory probe latency divided by baseline memory median at t.",
+        "memory probe slower than usual",
     ),
     FeatureSpec(
         "probe_disk_ratio",
         "ratio",
         None,
         "Disk probe latency divided by baseline disk median at t.",
+        "disk probe slower than usual",
     ),
     FeatureSpec(
         "probe_total_ratio",
         "ratio",
         None,
         "Total probe latency divided by baseline total median at t.",
+        "system probe latency elevated",
     ),
     FeatureSpec(
-        "probe_total_ratio_mean_12s", "ratio", "12s", "Mean probe total ratio over 12s window."
+        "probe_total_ratio_mean_12s",
+        "ratio",
+        "12s",
+        "Mean probe total ratio over 12s window.",
+        "sustained probe latency slowdown",
     ),
     # 11. Throttling signature
     FeatureSpec(
@@ -135,8 +219,10 @@ FEATURE_SPECS: list[FeatureSpec] = [
         "score",
         None,
         "Throttling indicator: max(0, probe_cpu_ratio - 1) * (1 - cpu_mean / 100).",
+        "system sluggish while idle",
     ),
 ]
 
 FEATURE_NAMES: list[str] = [f.name for f in FEATURE_SPECS]
 FEATURE_NAME_SET: frozenset[str] = frozenset(FEATURE_NAMES)
+FEATURE_MAP: dict[str, FeatureSpec] = {spec.name: spec for spec in FEATURE_SPECS}

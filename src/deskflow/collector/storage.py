@@ -82,6 +82,7 @@ class StorageScanner:
                 return self._cached_report
 
         start_mono = time.monotonic()
+        now_epoch = time.time()
         ts_utc = datetime.now(UTC).isoformat()
         locations = self._adapter.temp_and_cache_dirs()
         entries: list[StorageEntry] = []
@@ -90,8 +91,11 @@ class StorageScanner:
 
         for loc in locations:
             loc_bytes = 0
+            loc_cleanable_bytes = 0
             if not os.path.exists(loc.path):
-                entries.append(StorageEntry(path=loc.path, kind=loc.kind, bytes=0))
+                entries.append(
+                    StorageEntry(path=loc.path, kind=loc.kind, bytes=0, cleanable_bytes=0)
+                )
                 continue
 
             # Explicit stack avoiding recursion depth limits
@@ -128,7 +132,10 @@ class StorageScanner:
                             # Account file sizes
                             try:
                                 if item.is_file(follow_symlinks=False):
-                                    loc_bytes += item.stat(follow_symlinks=False).st_size
+                                    stat_res = item.stat(follow_symlinks=False)
+                                    loc_bytes += stat_res.st_size
+                                    if (now_epoch - stat_res.st_mtime) >= 86400.0:
+                                        loc_cleanable_bytes += stat_res.st_size
                                 elif item.is_dir(follow_symlinks=False):
                                     stack.append(item.path)
                             except OSError:
@@ -143,7 +150,14 @@ class StorageScanner:
                 except (PermissionError, FileNotFoundError, OSError):
                     continue
 
-            entries.append(StorageEntry(path=loc.path, kind=loc.kind, bytes=loc_bytes))
+            entries.append(
+                StorageEntry(
+                    path=loc.path,
+                    kind=loc.kind,
+                    bytes=loc_bytes,
+                    cleanable_bytes=loc_cleanable_bytes,
+                )
+            )
 
         duration_s = max(0.0, time.monotonic() - start_mono)
         report = StorageReport(

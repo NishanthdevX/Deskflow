@@ -8,6 +8,7 @@ from deskflow.features.builder import (
 )
 from deskflow.features.extract import build_row, extract_run_features
 from deskflow.features.registry import (
+    FEATURE_MAP,
     FEATURE_NAME_SET,
     FEATURE_NAMES,
     FEATURE_SET_VERSION,
@@ -17,6 +18,7 @@ from deskflow.features.registry import (
 from deskflow.features.splits import assign_splits
 
 __all__ = [
+    "FEATURE_MAP",
     "FEATURE_NAME_SET",
     "FEATURE_NAMES",
     "FEATURE_SET_VERSION",

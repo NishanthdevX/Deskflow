@@ -22,14 +22,13 @@ from deskflow.collector.probe import run_probe
 from deskflow.collector.sampler import Sampler
 from deskflow.collector.storage import StorageScanner
 from deskflow.features.extract import build_row
-from deskflow.features.registry import DEFAULT_HORIZON_S, FEATURE_SPECS
+from deskflow.features.registry import DEFAULT_HORIZON_S, FEATURE_MAP
 from deskflow.health.score import compute_health_score
 from deskflow.ml.artifacts import get_latest_model_id, load_model_card
 from deskflow.paths import get_data_dir
 from deskflow.platform.factory import get_adapter
+from deskflow.remediation.apps import find_idle_apps
 from deskflow.remediation.recommend import recommend_fixes
-
-FEATURE_MAP = {spec.name: spec for spec in FEATURE_SPECS}
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -274,7 +273,8 @@ def scan_command(
     is_anomaly = bool(anomaly_dict.get("is_anomaly", False))
     anomaly_score = float(anomaly_dict.get("score", 0.0))
 
-    # Top-3 TreeSHAP contributors for reasons
+    # Top-3 TreeSHAP contributors with positive contributions above epsilon (1e-4)
+    # Using plain language descriptions only
     reasons: list[str] = []
     if runtime.xgb_reg is not None:
         try:
@@ -282,17 +282,20 @@ def scan_command(
                 feature_vector,
                 runtime.xgb_reg,
                 feature_names=runtime.feature_order,
-                k=3,
+                k=len(runtime.feature_order),
             )
             for f_name, shap_val in top_feats:
-                spec = FEATURE_MAP.get(f_name)
-                desc = spec.description if spec else f_name
-                sign = "+" if shap_val > 0 else ""
-                reasons.append(f"{desc} ({sign}{shap_val:.2f})")
+                if shap_val > 1e-4:
+                    spec = FEATURE_MAP.get(f_name)
+                    phrase = spec.plain if spec and spec.plain else f_name
+                    reasons.append(f"{phrase} (+{shap_val:.2f})")
+                    if len(reasons) >= 3:
+                        break
         except Exception:
-            reasons = [f"Slowdown ratio {predicted_ratio:.2f} relative to baseline"]
-    else:
-        reasons = [f"Slowdown ratio {predicted_ratio:.2f} relative to baseline"]
+            pass
+
+    if not reasons:
+        reasons = ["No significant factors"]
 
     # Recommendations
     recs = recommend_fixes(
@@ -322,16 +325,23 @@ def scan_command(
     else:
         mem_status = "Poor"
 
-    # 3. Storage: Cleanable bytes
+    # 3. Storage: Both total bytes and cleanable bytes (>24h old)
     cleanable_bytes = 0
+    total_storage_bytes = 0
     if storage_report and storage_report.entries:
         safe_roots = {
             loc.path.lower() for loc in adapter.temp_and_cache_dirs() if loc.safe_to_clean
         }
         for entry in storage_report.entries:
             if entry.kind in ("temp", "cache") and entry.path.lower() in safe_roots:
-                cleanable_bytes += entry.bytes
+                cleanable_bytes += getattr(entry, "cleanable_bytes", entry.bytes)
+                total_storage_bytes += entry.bytes
+
     cleanable_gb = cleanable_bytes / (1024**3)
+    total_storage_gb = total_storage_bytes / (1024**3)
+    cleanable_mb = cleanable_bytes / (1024 * 1024)
+    total_storage_mb = total_storage_bytes / (1024 * 1024)
+
     if cleanable_gb < 2.0:
         storage_status = "Good"
     elif cleanable_gb < 10.0:
@@ -339,14 +349,10 @@ def scan_command(
     else:
         storage_status = "Poor"
 
-    # 4. Background Apps: Idle app count and RSS
-    idle_apps = [
-        p
-        for p in cur_rec.top_processes
-        if not p.is_protected and p.cpu_percent < 1.0 and p.age_s > 600.0 and p.pid > 4
-    ]
-    idle_count = len(idle_apps)
-    idle_rss_gb = sum(p.rss_bytes for p in idle_apps) / (1024**3)
+    # 4. Background Apps: Unified find_idle_apps
+    idle_groups = find_idle_apps(cur_rec.top_processes, adapter=adapter)
+    idle_count = len(idle_groups)
+    idle_rss_gb = sum(g.total_rss_bytes for g in idle_groups) / (1024**3)
     if idle_rss_gb < 1.0:
         apps_status = "Good"
     elif idle_rss_gb < 3.0:
@@ -389,6 +395,7 @@ def scan_command(
                 "storage": {
                     "status": storage_status,
                     "cleanable_gb": round(cleanable_gb, 2),
+                    "total_gb": round(total_storage_gb, 2),
                     "is_ml": False,
                 },
                 "background_apps": {
@@ -441,10 +448,15 @@ def scan_command(
         f"Predicted Slowdown (in 20s): {predicted_ratio:.2f}x baseline"
     )
 
-    # Issue tag & anomaly
-    conf_str = f" (confidence: {confidence:.0%})" if issue_tag != "none" else ""
-    anom_str = "[red]Yes[/red]" if is_anomaly else "[green]No[/green]"
-    console.print(f"Issue Tag: [bold]{issue_tag}[/bold]{conf_str} | Anomaly: {anom_str}")
+    # Merged status line:
+    # If anomaly is true and tag is healthy: "Unusual pattern detected, cause not identified"
+    # If tag is not healthy: print tag and confidence
+    # Otherwise: print nothing extra
+    # NEVER print "healthy" next to "Anomaly: Yes"
+    if is_anomaly and issue_tag.lower() == "healthy":
+        console.print("Status: [yellow]Unusual pattern detected, cause not identified[/yellow]")
+    elif issue_tag.lower() not in ("healthy", "none"):
+        console.print(f"Status: [yellow]{issue_tag}[/yellow] (confidence: {confidence:.0%})")
 
     # Reasons
     console.print("\n[bold]Top Contributing Factors:[/bold]")
@@ -468,7 +480,7 @@ def scan_command(
         f"{headroom_gb:.1f} GB ({mem_avail_pct:.0f}% free)",
     )
     storage_desc = (
-        f"{cleanable_gb:.1f} GB cleanable temp/cache"
+        f"{cleanable_mb:.1f} MB cleanable (>24h) / {total_storage_mb:.1f} MB total"
         if not no_storage
         else "Skipped (--no-storage)"
     )
@@ -480,7 +492,7 @@ def scan_command(
     table_cat.add_row(
         "Background apps",
         f"[{color_map.get(apps_status, 'white')}]{apps_status}[/]",
-        f"{idle_count} idle apps ({idle_rss_gb:.1f} GB RAM)",
+        f"{idle_count} idle app group(s) ({idle_rss_gb:.1f} GB RAM)",
     )
     console.print(table_cat)
 

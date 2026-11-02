@@ -5,6 +5,7 @@ from typing import Any
 
 from deskflow.collector.models import ProcessSample, StorageReport
 from deskflow.platform.base import PlatformAdapter
+from deskflow.remediation.apps import find_idle_apps, get_deskflow_process_tree_pids
 
 
 @dataclass(frozen=True)
@@ -33,22 +34,23 @@ def recommend_fixes(
     recs: list[RecommendedAction] = []
 
     # 1. Clean Temporary Files
-    # Check cleanable temp/cache bytes from storage report
+    # Check cleanable temp/cache bytes from storage report (files > 24h old)
     cleanable_bytes = 0
+    total_scanned_bytes = 0
     if storage_report and storage_report.entries:
-        # Check roots from adapter that are marked safe_to_clean
         safe_roots = {
             loc.path.lower() for loc in adapter.temp_and_cache_dirs() if loc.safe_to_clean
         }
         for entry in storage_report.entries:
             if entry.kind in ("temp", "cache") and entry.path.lower() in safe_roots:
-                cleanable_bytes += entry.bytes
+                cleanable_bytes += getattr(entry, "cleanable_bytes", entry.bytes)
+                total_scanned_bytes += entry.bytes
 
     # If storage report wasn't available or had entries >= 50 MB, or disk_pressure/anomaly
     if cleanable_bytes >= 50 * 1024 * 1024 or issue_tag == "disk_pressure" or is_anomaly:
         mb = cleanable_bytes / (1024 * 1024)
         evidence = (
-            f"{mb:.1f} MB in temporary/cache files scanned"
+            f"{mb:.1f} MB in cleanable files (>24h old) scanned"
             if cleanable_bytes > 0
             else "Temporary file accumulation detected"
         )
@@ -61,40 +63,40 @@ def recommend_fixes(
             )
         )
 
-    # 2. Close Idle Applications
-    idle_candidates = [
-        p
-        for p in top_processes
-        if not p.is_protected and p.cpu_percent < 1.0 and p.age_s > 600.0 and p.pid > 4
-    ]
-    groups: dict[str, list[ProcessSample]] = {}
-    for p in idle_candidates:
-        groups.setdefault(p.name, []).append(p)
+    # 2. Close Idle Applications (unified with scan Background apps)
+    idle_groups = find_idle_apps(top_processes, adapter=adapter)
 
-    large_idle_groups = {
-        name: procs
-        for name, procs in groups.items()
-        if (sum(p.rss_bytes for p in procs) / (1024 * 1024)) >= 300.0
-    }
-
-    if large_idle_groups:
-        total_procs = sum(len(procs) for procs in large_idle_groups.values())
-        total_rss = sum(sum(p.rss_bytes for p in procs) for procs in large_idle_groups.values())
+    if idle_groups:
+        total_procs = sum(len(g.pids) for g in idle_groups)
+        total_rss = sum(g.total_rss_bytes for g in idle_groups)
         gb = total_rss / (1024**3)
-        names_str = ", ".join(large_idle_groups.keys())
+        names_str = ", ".join(g.name for g in idle_groups)
+        ev_text = (
+            f"{total_procs} idle processes across {len(idle_groups)} app(s) hold {gb:.1f} GB of RAM"
+        )
         recs.append(
             RecommendedAction(
                 action_id="close_idle_apps",
                 title="Close idle applications",
                 description=f"Closes idle processes holding significant memory ({names_str}).",
-                evidence=f"{total_procs} idle processes hold {gb:.1f} GB of RAM",
+                evidence=ev_text,
                 warning="Unsaved work in those applications may be lost.",
             )
         )
 
     # 3. End Busy Processes
+    deskflow_tree = get_deskflow_process_tree_pids()
+    never_offer = {n.lower() for n in adapter.never_offer_names()}
+    protected_names = {n.lower() for n in adapter.protected_process_names()}
     busy_candidates = [
-        p for p in top_processes if not p.is_protected and p.cpu_percent >= 50.0 and p.pid > 4
+        p
+        for p in top_processes
+        if not p.is_protected
+        and p.cpu_percent >= 50.0
+        and p.pid > 4
+        and p.pid not in deskflow_tree
+        and p.name.lower() not in never_offer
+        and p.name.lower() not in protected_names
     ]
     if busy_candidates:
         top_busy = sorted(busy_candidates, key=lambda p: p.cpu_percent, reverse=True)[:3]

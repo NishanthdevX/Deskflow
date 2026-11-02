@@ -53,4 +53,3 @@ def compute_health_score(predicted_ratio: float) -> tuple[int, str]:
         label = "Poor"
 
     return score, label
-

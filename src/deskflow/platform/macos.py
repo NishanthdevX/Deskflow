@@ -1,12 +1,17 @@
 """macOS platform adapter implementation."""
 
+import logging
 import os
+import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import psutil
 
 from deskflow.platform.base import BatteryInfo, CacheLocation, CpuFreq, PlatformAdapter
+
+logger = logging.getLogger(__name__)
 
 _MACOS_PROTECTED_PROCESSES = frozenset(
     {
@@ -23,6 +28,55 @@ _MACOS_PROTECTED_PROCESSES = frozenset(
         "distnoted",
         "cfprefsd",
     }
+)
+
+_MACOS_NEVER_OFFER = (
+    frozenset(
+        {
+            # Shells and terminals
+            "terminal",
+            "iterm2",
+            "iterm",
+            "alacritty",
+            "kitty",
+            "wezterm",
+            "bash",
+            "zsh",
+            "sh",
+            # IDEs and editors
+            "code",
+            "cursor",
+            "antigravity",
+            "pycharm",
+            "intellij idea",
+            "idea",
+            "xcode",
+            "sublime text",
+            "textmate",
+            # File manager and shell UI
+            "finder",
+            "dock",
+            "systemuiserver",
+            "windowserver",
+            "loginwindow",
+            # Security & background
+            "syspolicyd",
+            "securityd",
+            # Presentation and conferencing apps
+            "keynote",
+            "powerpoint",
+            "microsoft powerpoint",
+            "zoom",
+            "zoom.us",
+            "teams",
+            "microsoft teams",
+            "obs",
+            "slack",
+            "webex",
+            "discord",
+        }
+    )
+    | _MACOS_PROTECTED_PROCESSES
 )
 
 
@@ -120,3 +174,81 @@ class MacOSAdapter(PlatformAdapter):
     def thread_count(self) -> int | None:
         """Return None as no low-overhead thread counting source exists on macOS."""
         return None
+
+    def get_window_owning_pids(self) -> set[int]:
+        """Return process IDs that own visible UI on macOS (background only false).
+
+        Note: Best effort via osascript System Events with 5s timeout.
+        Cannot be tested locally on Windows/Linux environments.
+        """
+        script = (
+            'tell application "System Events" to get unix id of every process '
+            "whose background only is false"
+        )
+        try:
+            res = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True,
+                text=True,
+                timeout=5.0,
+                check=False,
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                # Output format: "123, 456, 789"
+                parts = [p.strip() for p in res.stdout.split(",") if p.strip().isdigit()]
+                return {int(p) for p in parts}
+        except Exception as e:
+            logger.debug("Failed to query macOS visible UI processes: %s", e)
+        return set()
+
+    def get_foreground_pid(self) -> int | None:
+        """Return process ID of frontmost application on macOS via osascript."""
+        script = (
+            'tell application "System Events" to get unix id of '
+            "first process whose frontmost is true"
+        )
+        try:
+            res = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True,
+                text=True,
+                timeout=5.0,
+                check=False,
+            )
+            if res.returncode == 0 and res.stdout.strip().isdigit():
+                return int(res.stdout.strip())
+        except Exception as e:
+            logger.debug("Failed to query macOS frontmost process: %s", e)
+        return None
+
+    def close_process_windows(self, pid: int, timeout_s: float = 8.0) -> bool:
+        """Gracefully quit an application on macOS using AppleScript."""
+        try:
+            proc = psutil.Process(pid)
+            app_name = proc.name()
+            # Try to tell application to quit
+            script = f'tell application "{app_name}" to quit'
+            subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True,
+                timeout=5.0,
+                check=False,
+            )
+            start = time.monotonic()
+            while time.monotonic() - start < timeout_s:
+                if not psutil.pid_exists(pid):
+                    return True
+                try:
+                    if not proc.is_running() or proc.status() == psutil.STATUS_ZOMBIE:
+                        return True
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    return True
+                time.sleep(0.2)
+            return False
+        except Exception as e:
+            logger.debug("Failed graceful close for pid %d on macOS: %s", pid, e)
+            return False
+
+    def never_offer_names(self) -> frozenset[str]:
+        """Return lowercase set of process names that must never be offered for termination."""
+        return _MACOS_NEVER_OFFER

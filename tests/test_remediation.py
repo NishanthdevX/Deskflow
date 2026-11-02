@@ -43,6 +43,12 @@ class DummyAdapter(PlatformAdapter):
     def protected_process_names(self) -> frozenset[str]:
         return frozenset({"explorer.exe", "system", "launchd"})
 
+    def get_window_owning_pids(self) -> set[int]:
+        return {10, 200, 301, 302, 501, 502, 503, 601}
+
+    def never_offer_names(self) -> frozenset[str]:
+        return frozenset({"explorer.exe", "system", "launchd", "code.exe"})
+
     def is_trim_memory_supported(self) -> bool:
         return self._is_win
 
@@ -152,7 +158,8 @@ def test_close_idle_apps_safety() -> None:
         ),
     ]
 
-    res = close_idle_apps(procs, dry_run=True)
+    adapter = DummyAdapter(temp_dir=Path("."))
+    res = close_idle_apps(procs, adapter=adapter, dry_run=True)
     assert res.dry_run is True
     assert "idle_browser.exe" in res.details
     assert "explorer.exe" not in res.details
@@ -192,7 +199,8 @@ def test_end_busy_process() -> None:
         ),
     ]
 
-    res = end_busy_process(procs, dry_run=True)
+    adapter = DummyAdapter(temp_dir=Path("."))
+    res = end_busy_process(procs, adapter=adapter, dry_run=True)
     assert res.dry_run is True
     assert "worker1.exe_501" in res.details
     assert "worker2.exe_502" in res.details

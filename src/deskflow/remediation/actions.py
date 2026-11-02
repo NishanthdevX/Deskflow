@@ -3,6 +3,7 @@
 import logging
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ import psutil
 
 from deskflow.collector.models import ProcessSample
 from deskflow.platform.base import PlatformAdapter
+from deskflow.remediation.apps import find_idle_apps, get_deskflow_process_tree_pids
 from deskflow.safety import is_protected
 
 logger = logging.getLogger(__name__)
@@ -124,78 +126,96 @@ def clean_temp(
 
 def close_idle_apps(
     processes: list[ProcessSample],
+    adapter: PlatformAdapter | None = None,
     dry_run: bool = False,
     force: bool = False,
     min_group_rss_mb: float = 300.0,
+    confirm_force_cb: Callable[[str, int], bool] | None = None,
 ) -> ActionResult:
     """Close non-protected idle applications owned by user holding significant memory.
 
-    Candidates:
-    - cpu < 1.0%
-    - age > 10 minutes (600s)
-    - non-protected
-    - grouped by process name, offered if group RSS >= 300 MB.
+    Escalation rules:
+    - Candidates found via unified find_idle_apps(processes, adapter).
+    - Window-owning visible apps only; NEVER_OFFER and foreground apps strictly excluded.
+    - Graceful-first: posts WM_CLOSE (Windows) or AppleScript quit (macOS), waits up to 8s.
+    - If app is still running (e.g. at save prompt):
+      NEVER hard-kill unless force=True AND confirm_force_cb returns True.
     """
-    # 1. Filter candidates
-    candidates = [
-        p
-        for p in processes
-        if not p.is_protected and p.cpu_percent < 1.0 and p.age_s > 600.0 and p.pid > 4
-    ]
+    from deskflow.platform.factory import get_adapter
 
-    # 2. Group by process name
-    groups: dict[str, list[ProcessSample]] = {}
-    for p in candidates:
-        groups.setdefault(p.name, []).append(p)
+    eff_adapter = adapter or get_adapter()
+    min_rss_bytes = int(min_group_rss_mb * 1024 * 1024)
+    idle_groups = find_idle_apps(
+        top_processes=processes,
+        adapter=eff_adapter,
+        min_rss_bytes=min_rss_bytes,
+        max_cpu_percent=2.0,
+    )
 
-    target_groups = {
-        name: procs
-        for name, procs in groups.items()
-        if (sum(p.rss_bytes for p in procs) / (1024 * 1024)) >= min_group_rss_mb
-    }
-
-    if not target_groups:
+    if not idle_groups:
         return ActionResult(
             action="close_idle_apps",
             success=True,
-            message="No idle application groups exceeding 300 MB found.",
+            message=f"No idle application groups exceeding {min_group_rss_mb:.0f} MB found.",
             dry_run=dry_run,
         )
 
     closed_count = 0
     bytes_freed = 0
     details: dict[str, Any] = {}
+    still_running: list[str] = []
 
-    for name, procs in target_groups.items():
-        group_rss = sum(p.rss_bytes for p in procs)
-        bytes_freed += group_rss
-        details[name] = {"count": len(procs), "rss_bytes": group_rss}
+    for group in idle_groups:
+        details[group.name] = {
+            "count": len(group.pids),
+            "rss_bytes": group.total_rss_bytes,
+            "pids": list(group.pids),
+        }
 
         if dry_run:
-            closed_count += len(procs)
+            closed_count += len(group.pids)
+            bytes_freed += group.total_rss_bytes
             continue
 
-        for p in procs:
-            if is_protected(p.name, p.pid):
-                continue
-            try:
-                proc = psutil.Process(p.pid)
-                proc.terminate()
-                try:
-                    proc.wait(timeout=5.0)
-                except psutil.TimeoutExpired:
-                    if force:
-                        proc.kill()
+        group_freed = 0
+        for pid in group.pids:
+            # Graceful close first
+            closed = eff_adapter.close_process_windows(pid, timeout_s=8.0)
+            if not closed:
+                if force:
+                    confirmed = False
+                    if confirm_force_cb is not None:
+                        confirmed = confirm_force_cb(group.name, pid)
+                    if confirmed:
+                        try:
+                            proc = psutil.Process(pid)
+                            proc.kill()
+                            closed = True
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            closed = True
+                else:
+                    closed = False
+
+            if closed:
                 closed_count += 1
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
+                try:
+                    p_match = next((p for p in processes if p.pid == pid), None)
+                    group_freed += p_match.rss_bytes if p_match else 0
+                except Exception:
+                    pass
+            else:
+                still_running.append(f"{group.name} (PID {pid})")
+
+        bytes_freed += group_freed
 
     prefix = "[Dry-run] Would close" if dry_run else "Closed"
     mb = bytes_freed / (1024 * 1024)
     msg = (
         f"{prefix} {closed_count} idle processes across "
-        f"{len(target_groups)} app groups holding {mb:.1f} MB."
+        f"{len(idle_groups)} app groups holding {mb:.1f} MB."
     )
+    if still_running:
+        msg += f" Note: {len(still_running)} process(es) still running: {', '.join(still_running)}."
 
     return ActionResult(
         action="close_idle_apps",
@@ -209,12 +229,28 @@ def close_idle_apps(
 
 def end_busy_process(
     processes: list[ProcessSample],
+    adapter: PlatformAdapter | None = None,
     dry_run: bool = False,
     force: bool = False,
+    confirm_force_cb: Callable[[str, int], bool] | None = None,
 ) -> ActionResult:
-    """Terminate up to 3 non-protected user processes using >= 50% CPU."""
+    """End up to 3 non-protected user processes using >= 50% CPU using graceful-first escalation."""
+    from deskflow.platform.factory import get_adapter
+
+    eff_adapter = adapter or get_adapter()
+    deskflow_tree_pids = get_deskflow_process_tree_pids()
+    never_offer = {n.lower() for n in eff_adapter.never_offer_names()}
+    protected_names = {n.lower() for n in eff_adapter.protected_process_names()}
+
     busy_procs = [
-        p for p in processes if not p.is_protected and p.cpu_percent >= 50.0 and p.pid > 4
+        p
+        for p in processes
+        if not p.is_protected
+        and p.cpu_percent >= 50.0
+        and p.pid > 4
+        and p.pid not in deskflow_tree_pids
+        and p.name.lower() not in never_offer
+        and p.name.lower() not in protected_names
     ]
     # Sort descending by CPU
     busy_procs = sorted(busy_procs, key=lambda p: p.cpu_percent, reverse=True)[:3]
@@ -229,6 +265,7 @@ def end_busy_process(
 
     ended_count = 0
     details: dict[str, Any] = {}
+    still_running: list[str] = []
 
     for p in busy_procs:
         details[f"{p.name}_{p.pid}"] = {
@@ -239,22 +276,31 @@ def end_busy_process(
             ended_count += 1
             continue
 
-        if is_protected(p.name, p.pid):
-            continue
-        try:
-            proc = psutil.Process(p.pid)
-            proc.terminate()
-            try:
-                proc.wait(timeout=5.0)
-            except psutil.TimeoutExpired:
-                if force:
-                    proc.kill()
+        closed = eff_adapter.close_process_windows(p.pid, timeout_s=8.0)
+        if not closed:
+            if force:
+                confirmed = False
+                if confirm_force_cb is not None:
+                    confirmed = confirm_force_cb(p.name, p.pid)
+                if confirmed:
+                    try:
+                        proc = psutil.Process(p.pid)
+                        proc.kill()
+                        closed = True
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        closed = True
+            else:
+                closed = False
+
+        if closed:
             ended_count += 1
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
+        else:
+            still_running.append(f"{p.name} (PID {p.pid})")
 
     prefix = "[Dry-run] Would end" if dry_run else "Ended"
     msg = f"{prefix} {ended_count} high-CPU process(es)."
+    if still_running:
+        msg += f" Note: {len(still_running)} process(es) still running: {', '.join(still_running)}."
 
     return ActionResult(
         action="end_busy_process",

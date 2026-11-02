@@ -100,13 +100,18 @@ deskflow fix [OPTIONS]
 
 - `--action`, `-a` `TEXT`: One or more specific action IDs to execute directly (`clean_temp`, `close_idle_apps`, `end_busy_process`, `trim_memory`).
 - `--dry-run`: Simulate actions and print expected impact without making changes.
+- `--force`: Allow terminating processes if graceful closing times out (requires explicit second confirmation).
 - `--yes`, `-y`: Bypass interactive selection and confirmation prompts.
 - `--no-rescan`: Skip post-fix verification re-scan.
 
 #### Audit Log (`fixlog.jsonl`)
 
-Every execution of `deskflow fix` appends a record to `<user_data_dir>/fixlog.jsonl`:
+Every execution of `deskflow fix` appends a record to `<user_data_dir>/fixlog.jsonl`.
 
+- **Non-dry-run records (`"dry_run": false`)**: Contains actual measured `bytes_freed` and the `after` verification state block.
+- **Dry-run records (`"dry_run": true`)**: Estimated impact goes into `estimated_bytes_freed` and `estimated_details`. `bytes_freed` and `after` are strictly `null` (never storing unmeasured estimates as actuals).
+
+##### Non-Dry-Run Schema Example
 ```json
 {
   "ts_utc": "2026-11-01T12:00:00Z",
@@ -134,6 +139,39 @@ Every execution of `deskflow fix` appends a record to `<user_data_dir>/fixlog.js
     "available_memory_bytes": 4447221760,
     "temp_bytes": 0
   }
+}
+```
+
+##### Dry-Run Schema Example
+```json
+{
+  "ts_utc": "2026-11-01T12:00:00Z",
+  "actions": ["close_idle_apps"],
+  "dry_run": true,
+  "results": [
+    {
+      "action": "close_idle_apps",
+      "success": true,
+      "message": "[Dry-run] Would close 2 idle processes across 1 app groups holding 620.0 MB.",
+      "bytes_freed": null,
+      "estimated_bytes_freed": 650117120,
+      "estimated_details": {
+        "spotify.exe": {
+          "count": 2,
+          "rss_bytes": 650117120,
+          "pids": [1234, 1235]
+        }
+      }
+    }
+  ],
+  "before": {
+    "score": 75,
+    "predicted_ratio": 1.50,
+    "probe_ms": 78.4,
+    "available_memory_bytes": 4294967296,
+    "temp_bytes": 152254464
+  },
+  "after": null
 }
 ```
 

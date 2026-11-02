@@ -24,4 +24,3 @@ def append_fix_log(record: dict[str, Any], data_dir: Path | None = None) -> Path
     with open(log_file, "a", encoding="utf-8") as f:
         f.write(json.dumps(record) + "\n")
     return log_file
-

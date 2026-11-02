@@ -72,7 +72,7 @@ def _gather_state(adapter: Any, baseline: Any, runtime: Any, card: Any) -> dict[
     if storage_report and storage_report.entries:
         for entry in storage_report.entries:
             if entry.kind in ("temp", "cache") and entry.path.lower() in safe_roots:
-                temp_bytes += entry.bytes
+                temp_bytes += getattr(entry, "cleanable_bytes", entry.bytes)
 
     return {
         "score": score,
@@ -108,6 +108,11 @@ def fix_command(
         False,
         "--no-rescan",
         help="Skip post-fix verification scan.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Allow process termination after graceful close timeout with typed confirmation.",
     ),
 ) -> None:
     """Diagnose system, execute confirmed safe remediation actions, and re-scan impact."""
@@ -164,7 +169,10 @@ def fix_command(
 
         console.print("\n[bold]Available Fix Actions:[/bold]")
         for idx, r in enumerate(recs, start=1):
-            console.print(f"  {idx}. [bold]{r.title}[/bold] ({r.action_id}): {r.evidence}")
+            warn_str = f"\n     [yellow]Warning: {r.warning}[/yellow]" if r.warning else ""
+            console.print(
+                f"  {idx}. [bold]{r.title}[/bold] ({r.action_id}): {r.evidence}{warn_str}"
+            )
 
         if yes:
             chosen_actions = [r.action_id for r in recs]
@@ -195,6 +203,18 @@ def fix_command(
             console.print("Aborted by user.")
             return
 
+    def _confirm_force(app_name: str, pid: int) -> bool:
+        console.print(
+            f"\n[bold red]WARNING: Graceful close timed out. "
+            f"Unsaved work in {app_name} will be lost.[/bold red]"
+        )
+        typed: str = typer.prompt(
+            f"Force terminate {app_name} (PID {pid})? Type 'yes' to kill",
+            default="no",
+            show_default=False,
+        )
+        return bool(typed.strip().lower() == "yes")
+
     # Execute Actions
     results: list[ActionResult] = []
     console.print("\n[bold]Executing actions...[/bold]")
@@ -203,9 +223,21 @@ def fix_command(
         if act == "clean_temp":
             res = clean_temp(adapter=adapter, dry_run=dry_run)
         elif act == "close_idle_apps":
-            res = close_idle_apps(before["top_processes"], dry_run=dry_run)
+            res = close_idle_apps(
+                before["top_processes"],
+                adapter=adapter,
+                dry_run=dry_run,
+                force=force,
+                confirm_force_cb=_confirm_force if force else None,
+            )
         elif act == "end_busy_process":
-            res = end_busy_process(before["top_processes"], dry_run=dry_run)
+            res = end_busy_process(
+                before["top_processes"],
+                adapter=adapter,
+                dry_run=dry_run,
+                force=force,
+                confirm_force_cb=_confirm_force if force else None,
+            )
         elif act == "trim_memory":
             res = trim_memory(before["top_processes"], adapter=adapter, dry_run=dry_run)
         else:
@@ -291,37 +323,66 @@ def fix_command(
     elif dry_run:
         console.print("\n[dim]Dry run complete. No modifications were made to the system.[/dim]")
 
-    # Audit Logging
-    log_record = {
-        "ts_utc": datetime.now(UTC).isoformat(),
-        "actions": chosen_actions,
-        "dry_run": dry_run,
-        "results": [
+    # Audit Logging (Fix log honesty: dry-run records store estimated_* and null bytes_freed/after)
+    if dry_run:
+        results_log = [
+            {
+                "action": r.action,
+                "success": r.success,
+                "message": r.message,
+                "bytes_freed": None,
+                "estimated_bytes_freed": r.bytes_freed,
+                "estimated_details": r.details,
+            }
+            for r in results
+        ]
+        log_record = {
+            "ts_utc": datetime.now(UTC).isoformat(),
+            "actions": chosen_actions,
+            "dry_run": True,
+            "results": results_log,
+            "before": {
+                "score": before["score"],
+                "predicted_ratio": before["predicted_ratio"],
+                "probe_ms": before["probe_ms"],
+                "available_memory_bytes": before["available_memory_bytes"],
+                "temp_bytes": before["temp_bytes"],
+            },
+            "after": None,
+        }
+    else:
+        results_log = [
             {
                 "action": r.action,
                 "success": r.success,
                 "message": r.message,
                 "bytes_freed": r.bytes_freed,
+                "details": r.details,
             }
             for r in results
-        ],
-        "before": {
-            "score": before["score"],
-            "predicted_ratio": before["predicted_ratio"],
-            "probe_ms": before["probe_ms"],
-            "available_memory_bytes": before["available_memory_bytes"],
-            "temp_bytes": before["temp_bytes"],
-        },
-        "after": {
-            "score": after["score"],
-            "predicted_ratio": after["predicted_ratio"],
-            "probe_ms": after["probe_ms"],
-            "available_memory_bytes": after["available_memory_bytes"],
-            "temp_bytes": after["temp_bytes"],
+        ]
+        log_record = {
+            "ts_utc": datetime.now(UTC).isoformat(),
+            "actions": chosen_actions,
+            "dry_run": False,
+            "results": results_log,
+            "before": {
+                "score": before["score"],
+                "predicted_ratio": before["predicted_ratio"],
+                "probe_ms": before["probe_ms"],
+                "available_memory_bytes": before["available_memory_bytes"],
+                "temp_bytes": before["temp_bytes"],
+            },
+            "after": {
+                "score": after["score"],
+                "predicted_ratio": after["predicted_ratio"],
+                "probe_ms": after["probe_ms"],
+                "available_memory_bytes": after["available_memory_bytes"],
+                "temp_bytes": after["temp_bytes"],
+            }
+            if after is not None
+            else None,
         }
-        if after is not None
-        else None,
-    }
 
     log_path = append_fix_log(log_record)
     console.print(f"[dim]Fix execution logged to {log_path}[/dim]")

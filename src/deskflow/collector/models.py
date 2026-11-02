@@ -97,6 +97,7 @@ class StorageEntry:
     path: str
     kind: str
     bytes: int
+    cleanable_bytes: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         """Convert entry to dictionary."""
@@ -105,7 +106,12 @@ class StorageEntry:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "StorageEntry":
         """Reconstruct entry from dictionary."""
-        return cls(**data)
+        return cls(
+            path=data["path"],
+            kind=data["kind"],
+            bytes=int(data["bytes"]),
+            cleanable_bytes=int(data.get("cleanable_bytes", 0)),
+        )
 
 
 @dataclass(frozen=True)

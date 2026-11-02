@@ -3,6 +3,7 @@
 import ctypes
 import os
 import tempfile
+import time
 from ctypes import wintypes
 
 import psutil
@@ -33,6 +34,64 @@ _WINDOWS_PROTECTED_PROCESSES = frozenset(
         "msmpeng.exe",
         "searchindexer.exe",
     }
+)
+
+_WINDOWS_NEVER_OFFER = (
+    frozenset(
+        {
+            # Shells and terminals
+            "cmd.exe",
+            "powershell.exe",
+            "pwsh.exe",
+            "bash.exe",
+            "zsh.exe",
+            "sh.exe",
+            "wt.exe",
+            "windowsterminal.exe",
+            "conhost.exe",
+            "mintty.exe",
+            "alacritty.exe",
+            "wezterm-gui.exe",
+            "wezterm.exe",
+            "kitty.exe",
+            "hyper.exe",
+            # IDEs and editors
+            "code.exe",
+            "cursor.exe",
+            "antigravity.exe",
+            "pycharm64.exe",
+            "pycharm.exe",
+            "idea64.exe",
+            "idea.exe",
+            "devenv.exe",
+            "sublime_text.exe",
+            "notepad++.exe",
+            # File manager and shell UI
+            "explorer.exe",
+            "dwm.exe",
+            "shellexperiencehost.exe",
+            "startmenuexperiencehost.exe",
+            "searchhost.exe",
+            "taskbar.exe",
+            # Security tools
+            "msmpeng.exe",
+            "securityhealthservice.exe",
+            "nissrv.exe",
+            "windowsdefender.exe",
+            # Presentation and conferencing apps
+            "powerpnt.exe",
+            "zoom.exe",
+            "teams.exe",
+            "ms-teams.exe",
+            "obs64.exe",
+            "obs32.exe",
+            "obs.exe",
+            "slack.exe",
+            "webex.exe",
+            "discord.exe",
+        }
+    )
+    | _WINDOWS_PROTECTED_PROCESSES
 )
 
 
@@ -177,6 +236,99 @@ def _get_swap_status() -> tuple[int, float] | None:
     return None
 
 
+WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+WM_CLOSE = 0x0010
+
+
+def _ensure_interactive_desktop() -> None:
+    """Ensure thread is attached to interactive desktop if running in background session."""
+    try:
+        user32 = ctypes.windll.user32
+        h_desk = user32.OpenDesktopW(
+            "Default", 0, False, 0x0100 | 0x0040 | 0x0001 | 0x0002 | 0x0020
+        )
+        if h_desk:
+            user32.SetThreadDesktop(h_desk)
+    except Exception:
+        pass
+
+
+def _get_window_owning_pids_win32() -> set[int]:
+    """Return process IDs that own at least one visible top-level window with a non-empty title."""
+    try:
+        user32 = ctypes.windll.user32
+        _ensure_interactive_desktop()
+        pids: set[int] = set()
+
+        def _enum_cb(hwnd: wintypes.HWND, lparam: wintypes.LPARAM) -> bool:
+            if user32.IsWindowVisible(hwnd) and user32.GetWindowTextLengthW(hwnd) > 0:
+                pid = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                if pid.value > 0:
+                    pids.add(int(pid.value))
+            return True
+
+        cb = WNDENUMPROC(_enum_cb)
+        user32.EnumWindows(cb, 0)
+        return pids
+    except Exception:
+        return set()
+
+
+def _get_foreground_pid_win32() -> int | None:
+    """Return the process ID owning the currently active foreground window, or None."""
+    try:
+        user32 = ctypes.windll.user32
+        _ensure_interactive_desktop()
+        hwnd = user32.GetForegroundWindow()
+        if hwnd:
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value > 0:
+                return int(pid.value)
+    except Exception:
+        pass
+    return None
+
+
+def _close_process_windows_win32(pid: int, timeout_s: float = 8.0) -> bool:
+    """Post WM_CLOSE to visible windows of pid, waiting up to timeout_s for process exit."""
+    try:
+        user32 = ctypes.windll.user32
+        _ensure_interactive_desktop()
+        hwnds: list[wintypes.HWND] = []
+
+        def _enum_cb(hwnd: wintypes.HWND, lparam: wintypes.LPARAM) -> bool:
+            if user32.IsWindowVisible(hwnd):
+                proc_pid = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(proc_pid))
+                if proc_pid.value == pid:
+                    hwnds.append(hwnd)
+            return True
+
+        cb = WNDENUMPROC(_enum_cb)
+        user32.EnumWindows(cb, 0)
+
+        for hwnd in hwnds:
+            user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+
+        start = time.monotonic()
+        while time.monotonic() - start < timeout_s:
+            if not psutil.pid_exists(pid):
+                return True
+            try:
+                proc = psutil.Process(pid)
+                if not proc.is_running() or proc.status() == psutil.STATUS_ZOMBIE:
+                    return True
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                return True
+            time.sleep(0.2)
+
+        return False
+    except Exception:
+        return False
+
+
 class WindowsAdapter(PlatformAdapter):
     """Platform adapter for Windows 10/11."""
 
@@ -309,3 +461,19 @@ class WindowsAdapter(PlatformAdapter):
                 ctypes.windll.kernel32.CloseHandle(handle)
         except Exception:
             return False
+
+    def get_window_owning_pids(self) -> set[int]:
+        """Return process IDs that own at least one visible top-level titled window."""
+        return _get_window_owning_pids_win32()
+
+    def get_foreground_pid(self) -> int | None:
+        """Return the process ID owning the currently active foreground window, or None."""
+        return _get_foreground_pid_win32()
+
+    def close_process_windows(self, pid: int, timeout_s: float = 8.0) -> bool:
+        """Post WM_CLOSE to process windows, waiting up to timeout_s for graceful exit."""
+        return _close_process_windows_win32(pid=pid, timeout_s=timeout_s)
+
+    def never_offer_names(self) -> frozenset[str]:
+        """Return lowercase set of process names that must never be offered for termination."""
+        return _WINDOWS_NEVER_OFFER
