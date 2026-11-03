@@ -1,6 +1,7 @@
 """Command-line entry point for deskflow."""
 
 import sys
+from collections.abc import Callable
 
 from deskflow import __version__
 
@@ -9,6 +10,7 @@ if any(arg in ("--version", "-V") for arg in sys.argv[1:]):
     sys.exit(0)
 
 import typer
+from rich.console import Console
 
 from deskflow.commands.baseline import app as baseline_app
 from deskflow.commands.collect import app as collect_app
@@ -22,7 +24,7 @@ app = typer.Typer(
     name="deskflow",
     help=(
         "Device-care tool: samples system telemetry, measures performance, "
-        "predicts sluggishness 30 seconds ahead, and suggests safe fixes."
+        "predicts sluggishness 20 seconds ahead, and suggests safe fixes."
     ),
     add_completion=False,
 )
@@ -35,6 +37,31 @@ app.add_typer(baseline_app, name="baseline")
 app.add_typer(lab_app, name="lab")
 app.add_typer(dataset_app, name="dataset")
 app.add_typer(models_app, name="models")
+
+
+def show_home_menu(input_fn: Callable[[str], str] = input) -> None:
+    """Display the lightweight interactive launcher and run one selected action."""
+    console = Console()
+    console.print("[bright_cyan bold]DESKFLOW[/bright_cyan bold]")
+    console.print("[dim]Device health scan with ML slowdown prediction[/dim]")
+    console.print("1 Scan\n2 Fix (preview first)\n3 Doctor\n4 Baseline status\n5 Quit")
+    choice = input_fn("Select: ").strip()
+    if choice == "1":
+        from deskflow.commands.scan import scan_command
+
+        scan_command()
+    elif choice == "2":
+        from deskflow.commands.fix import fix_command
+
+        fix_command(dry_run=True)
+    elif choice == "3":
+        from deskflow.commands.doctor import doctor_command
+
+        doctor_command()
+    elif choice == "4":
+        from deskflow.commands.baseline import show_command
+
+        show_command()
 
 
 @app.command(
@@ -139,6 +166,7 @@ def scan(
         "-y",
         help="Automatically confirm any required baseline calibration.",
     ),
+    plain: bool = typer.Option(False, "--plain", help="Use ASCII-only, uncoloured output."),
 ) -> None:
     """Run an end-to-end device scan, evaluate health score, and recommend fixes."""
     from pathlib import Path
@@ -152,6 +180,7 @@ def scan(
         timing=timing,
         replay=Path(replay) if replay else None,
         yes=yes,
+        plain=plain,
     )
 
 
@@ -182,6 +211,7 @@ def fix(
         "--no-rescan",
         help="Skip post-fix verification scan.",
     ),
+    plain: bool = typer.Option(False, "--plain", help="Use ASCII-only, uncoloured output."),
 ) -> None:
     """Execute safe remediation actions and verify impact with re-scan."""
     from deskflow.commands.fix import fix_command
@@ -191,6 +221,7 @@ def fix(
         dry_run=dry_run,
         yes=yes,
         no_rescan=no_rescan,
+        plain=plain,
     )
 
 
@@ -212,6 +243,12 @@ def main(
     ),
 ) -> None:
     """deskflow: command-line device-care and performance prediction."""
+    from deskflow.ui.theme import configure_stdout
+
+    configure_stdout()
+    if len(sys.argv) != 1 or not sys.stdin.isatty():
+        return
+    show_home_menu()
 
 
 if __name__ == "__main__":

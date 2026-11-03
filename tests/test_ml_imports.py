@@ -3,9 +3,11 @@
 import numpy as np
 import pandas as pd
 import pyarrow as pa
-import shap
+import pytest
 import xgboost as xgb
 from sklearn.ensemble import IsolationForest
+
+shap = pytest.importorskip("shap", reason="SHAP is an optional training extra")
 
 
 def test_ml_imports_and_basic_fits() -> None:

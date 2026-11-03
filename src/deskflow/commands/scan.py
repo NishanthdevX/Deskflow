@@ -67,6 +67,7 @@ def scan_command(
         "-y",
         help="Automatically confirm any required baseline calibration.",
     ),
+    plain: bool = typer.Option(False, "--plain"),
 ) -> None:
     """Run an end-to-end device scan, evaluate health score, and recommend fixes."""
     import numpy as np
@@ -78,6 +79,10 @@ def scan_command(
 
     # 1. Resolve Power State and Baseline
     power_state = get_current_power_state(adapter)
+    if power_state == "ac" and not output_json:
+        console.print(
+            "[yellow]AC results are unvalidated; current models use battery-only data.[/yellow]"
+        )
     try:
         baseline = load_baseline(power_state=power_state)
     except FileNotFoundError:
@@ -426,7 +431,44 @@ def scan_command(
         print(json.dumps(result_payload, indent=2))
         return
 
-    # 7. Human-readable CLI Output (Compact, no emojis, 80 columns)
+    # 7. Human-readable CLI Output
+    from deskflow.ui.theme import use_plain_output
+    from deskflow.ui.widgets import scan_dashboard
+
+    plain = use_plain_output(plain)
+    dashboard_console = Console(no_color=plain)
+    dashboard_console.print("Deskflow Scan")
+    dashboard_console.print(f"Health Score: {score}/100 ({health_label})")
+    category_rows = [
+        ("Performance", perf_status, f"{score}/100, ML prediction", float(score)),
+        ("Memory", mem_status, f"{headroom_gb:.1f} GB free", mem_avail_pct),
+        ("Storage", storage_status, f"{cleanable_mb:.1f} MB cleanable", 0.0),
+        ("Background apps", apps_status, f"{idle_count} group(s), {idle_rss_gb:.1f} GB", 0.0),
+    ]
+    recommendation_rows = [(r.title, r.evidence, r.warning) for r in recs]
+    for panel in scan_dashboard(
+        baseline.machine_id,
+        power_state,
+        primary_reg,
+        bool(card.get("synthetic")),
+        score,
+        health_label,
+        predicted_ratio,
+        issue_tag,
+        confidence,
+        is_anomaly,
+        reasons,
+        category_rows,
+        recommendation_rows,
+        total_s,
+        plain,
+    ):
+        dashboard_console.print(panel)
+    dashboard_console.print("System Categories")
+    dashboard_console.print(f"Scan completed in {total_s:.1f}s.")
+    return
+
+    # Legacy compact output retained below for reference.
     if card.get("synthetic"):
         console.print(
             Panel.fit(

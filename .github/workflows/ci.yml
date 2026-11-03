@@ -13,8 +13,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
-        python-version: ["3.11", "3.12"]
+        include:
+          - os: windows-latest
+            python-version: "3.11"
+          - os: windows-latest
+            python-version: "3.12"
+          - os: macos-latest
+            python-version: "3.12"
 
     steps:
       - name: Checkout
@@ -31,7 +36,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install project
-        run: uv sync --python ${{ matrix.python-version }}
+        run: uv sync --locked --python ${{ matrix.python-version }}
 
       - name: ruff check
         run: uv run ruff check .

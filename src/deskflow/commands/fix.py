@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import typer
+from rich import box
 from rich.console import Console
 from rich.table import Table
 
@@ -114,8 +115,13 @@ def fix_command(
         "--force",
         help="Allow process termination after graceful close timeout with typed confirmation.",
     ),
+    plain: bool = typer.Option(False, "--plain"),
 ) -> None:
     """Diagnose system, execute confirmed safe remediation actions, and re-scan impact."""
+    from deskflow.ui.theme import use_plain_output
+
+    plain = use_plain_output(plain)
+    console = Console(no_color=plain)
     adapter = get_adapter()
     power_state = get_current_power_state(adapter)
 
@@ -257,7 +263,11 @@ def fix_command(
         after = _gather_state(adapter=adapter, baseline=baseline, runtime=runtime, card=card)
 
         # Before & After Table
-        table = Table(title="\nRemediation Verification", show_header=True)
+        table = Table(
+            title="Remediation Verification",
+            box=box.ASCII if plain else box.SQUARE,
+            show_header=True,
+        )
         table.add_column("Metric", style="bold")
         table.add_column("Before", justify="right")
         table.add_column("After", justify="right")

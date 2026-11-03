@@ -22,9 +22,6 @@ dependencies = [
 
 [project.optional-dependencies]
 train = [
-    "pandas",
-    "pyarrow",
-    "matplotlib",
     "shap",
 ]
 
@@ -33,6 +30,9 @@ deskflow = "deskflow.cli:app"
 
 [dependency-groups]
 dev = [
+    "pandas",
+    "pyarrow",
+    "matplotlib",
     "pytest",
     "pytest-cov",
     "ruff",

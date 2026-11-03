@@ -4,15 +4,11 @@ Command-line device-care tool for Windows 10/11 and macOS 12+.
 
 ## Description
 
-Deskflow samples system telemetry, runs a short measured performance probe, and uses trained
-ML models to predict how sluggish the machine will be 30 seconds from now. It tags the likely
-cause (CPU pressure or throttling, memory pressure, disk pressure, background application load),
-offers safe fixes, and re-measures after a fix.
+Deskflow samples local Windows and macOS telemetry, runs a measured performance probe, and uses
+trained models to predict probe slowdown 20 seconds ahead. It reports likely pressure, offers
+confirmed safe fixes, and records data locally for offline evaluation.
 
-It is also a college ML project: model training, offline evaluation, and live accuracy
-comparison are first-class features.
-
-Status: Phase 4 complete (Scan, deterministic 0-100 health score, safe remediation, and post-fix re-validation).
+Status: Phase 6 repository health and terminal UI work is in progress. See `docs/STATUS.md`.
 
 ## Installation
 
@@ -187,14 +183,15 @@ deskflow fix --action clean_temp --yes
 5. An Isolation Forest flags anomalies not seen during healthy training.
 6. A 0-100 health score is derived from predicted slowdown vs. this machine's own baseline.
 7. Optional safe fixes are offered; each requires explicit confirmation and supports --dry-run.
-8. Predictions are stored and scored against the probe measured at the predicted time.
 
-## Limitations
+## Scope and limitations
 
 - Windows 10/11 and macOS 12+ only. Linux is not supported.
 - No malware scanning or security hardening. This tool observes and reports; it does not
   protect against threats.
 - All data is stored locally. No network access occurs at runtime.
+- Models are trained and validated on battery power only. Results on AC power are unvalidated.
+- Current datasets are collected from one machine and may not generalize to other hardware.
 - Some metrics require administrator elevation on certain platforms. Those are opt-in and
   documented individually.
 

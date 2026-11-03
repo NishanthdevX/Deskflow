@@ -6,6 +6,7 @@ import sys
 
 import psutil
 import typer
+from rich import box
 from rich.console import Console
 from rich.table import Table
 
@@ -27,9 +28,15 @@ def _format_bytes(num_bytes: int) -> str:
 
 
 @app.callback(invoke_without_command=True)
-def doctor_command() -> None:
+def doctor_command(
+    plain: bool = typer.Option(False, "--plain", help="Use ASCII-only, uncoloured output."),
+) -> None:
     """Inspect system telemetry capabilities, measure baseline probe cost, and output verdict."""
-    console = Console()
+    from deskflow.ui.theme import use_plain_output
+    from deskflow.ui.widgets import titled_panel
+
+    plain = use_plain_output(plain)
+    console = Console(no_color=plain)
     adapter = get_adapter()
 
     # System overview
@@ -40,7 +47,7 @@ def doctor_command() -> None:
     console.print()
 
     # Capabilities Table
-    cap_table = Table(title="Hardware & Metric Capabilities", box=None, show_header=True)
+    cap_table = Table(box=box.ASCII if plain else box.SQUARE, show_header=True)
     cap_table.add_column("Subsystem", style="bold")
     cap_table.add_column("Capability")
     cap_table.add_column("Status")
@@ -128,7 +135,7 @@ def doctor_command() -> None:
         cache_details if cache_details else "None found",
     )
 
-    console.print(cap_table)
+    console.print(titled_panel("[SYSTEM CAPABILITIES]", cap_table, plain))
     console.print()
 
     # 6. Probe Baseline (median of 5 probes)
@@ -142,13 +149,13 @@ def doctor_command() -> None:
     min_ms = min(probe_totals_ms)
     max_ms = max(probe_totals_ms)
 
-    baseline_table = Table(title="Probe Baseline Latency (5 runs)", box=None, show_header=True)
+    baseline_table = Table(box=box.ASCII if plain else box.SQUARE, show_header=True)
     baseline_table.add_column("Statistic")
     baseline_table.add_column("Total Latency (ms)", justify="right")
     baseline_table.add_row("Median", f"{median_ms:.2f} ms")
     baseline_table.add_row("Min", f"{min_ms:.2f} ms")
     baseline_table.add_row("Max", f"{max_ms:.2f} ms")
-    console.print(baseline_table)
+    console.print(titled_panel("[PROBE BASELINE]", baseline_table, plain))
     console.print()
 
     # Verdict

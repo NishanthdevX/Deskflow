@@ -2,6 +2,9 @@
 
 Deskflow anticipates system degradation and sluggishness before it impacts foreground user responsiveness by predicting normalized probe latency 20 seconds ahead ($H = 20$ s).
 
+Models are trained and validated on battery power only. Results on AC power are unvalidated.
+The dual-state baseline format is retained for future AC validation.
+
 ## 1. Problem Formulation
 
 Conventional device-monitoring utilities trigger reactive alerts only after CPU or memory saturation reaches arbitrary fixed thresholds (such as 90% utilization). However, high utilization during smooth video rendering or batch compilation does not necessarily imply sluggishness, while low utilization during thermal throttling or disk thrashing can severely stall foreground responsiveness.
