@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Probe repeat diagnostics, probe warm-up settings stored with baselines, and direct module entry point.
+- Storage scan audit counters, shared terminal UI helpers, and a safe Tkinter demonstration workload.
+
+### Changed
+- Temporary cleanup recommendations now require 100 MiB of measured cleanable data.
+
 ## [0.1.0.dev3] - 2026-11-01
 
 ### Added

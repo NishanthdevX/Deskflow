@@ -7,6 +7,8 @@ from deskflow.collector.models import ProcessSample, StorageReport
 from deskflow.platform.base import PlatformAdapter
 from deskflow.remediation.apps import find_idle_apps, get_deskflow_process_tree_pids
 
+CLEAN_TEMP_MIN_BYTES = 100 * 1024 * 1024
+
 
 @dataclass(frozen=True)
 class RecommendedAction:
@@ -46,13 +48,12 @@ def recommend_fixes(
                 cleanable_bytes += getattr(entry, "cleanable_bytes", entry.bytes)
                 total_scanned_bytes += entry.bytes
 
-    # If storage report wasn't available or had entries >= 50 MB, or disk_pressure/anomaly
-    if cleanable_bytes >= 50 * 1024 * 1024 or issue_tag == "disk_pressure" or is_anomaly:
+    if cleanable_bytes >= CLEAN_TEMP_MIN_BYTES:
         mb = cleanable_bytes / (1024 * 1024)
         evidence = (
             f"{mb:.1f} MB in cleanable files (>24h old) scanned"
             if cleanable_bytes > 0
-            else "Temporary file accumulation detected"
+            else "No cleanable temporary files measured"
         )
         recs.append(
             RecommendedAction(

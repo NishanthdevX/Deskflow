@@ -15,7 +15,7 @@ def measure_collector_overhead(
     cmd = [
         sys.executable,
         "-m",
-        "deskflow.cli",
+        "deskflow",
         "collect",
         "--duration",
         str(duration),
@@ -33,9 +33,13 @@ def measure_collector_overhead(
 
     last_user = 0.0
     last_system = 0.0
+    observed_pids: set[int] = set()
+    external_cpu = 0.0
 
     while proc.poll() is None:
         try:
+            tree = [ps_proc, *ps_proc.children(recursive=True)]
+            observed_pids.update(item.pid for item in tree)
             times = ps_proc.cpu_times()
             last_user = times.user
             last_system = times.system
@@ -49,7 +53,8 @@ def measure_collector_overhead(
                     pass
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             break
-        time.sleep(0.2)
+            external_cpu = last_user + last_system
+        time.sleep(1.0)
 
     # Final check
     try:
@@ -76,6 +81,8 @@ def measure_collector_overhead(
     print(f"System CPU time: {last_system:.3f} s")
     print(f"Total CPU time: {total_cpu_time:.3f} s")
     print(f"CPU overhead: {cpu_percent_of_one_core:.2f}% of one core")
+    print(f"Measured process tree PIDs: {sorted(observed_pids)}")
+    print(f"External 1s PID sampling CPU: {external_cpu:.3f} s")
     print("-" * 50)
 
 

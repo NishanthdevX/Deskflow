@@ -12,6 +12,7 @@ from deskflow.paths import get_data_dir
 # Fixed workload sizes
 # Default 3 repeats for CPU and memory micro-workloads
 PROBE_REPEATS: int = 3
+PROBE_WARMUP_MS: int = 10
 
 # 60,000 iterations of linear congruential generator arithmetic (~15-18ms on modern CPU)
 CPU_PROBE_ITERATIONS: int = 60_000
@@ -35,6 +36,16 @@ def probe_cpu() -> int:
     if state == -1:
         return 0
     return t1 - t0
+
+
+def _warm_cpu() -> None:
+    """Keep one core active briefly before the timed workload."""
+    end = time.perf_counter_ns() + (PROBE_WARMUP_MS * 1_000_000)
+    state = 1
+    while time.perf_counter_ns() < end:
+        state = (state * 1103515245 + 12345) & 0x7FFFFFFF
+    if state == -1:
+        raise RuntimeError("unreachable")
 
 
 def probe_mem() -> int:
@@ -95,12 +106,11 @@ def run_probe(
         ProbeResult with duration in nanoseconds for each component and total.
     """
     ts_utc = datetime.now(UTC).isoformat()
-    if repeats > 1:
-        cpu_ns = min(probe_cpu() for _ in range(repeats))
-        mem_ns = min(probe_mem() for _ in range(repeats))
-    else:
-        cpu_ns = probe_cpu()
-        mem_ns = probe_mem()
+    _warm_cpu()
+    cpu_repeats = tuple(probe_cpu() for _ in range(repeats))
+    mem_repeats = tuple(probe_mem() for _ in range(repeats))
+    cpu_ns = min(cpu_repeats)
+    mem_ns = min(mem_repeats)
     disk_ns = probe_disk(data_dir=data_dir)
     total_ns = cpu_ns + mem_ns + disk_ns
 
@@ -110,4 +120,6 @@ def run_probe(
         mem_ns=mem_ns,
         disk_ns=disk_ns,
         total_ns=total_ns,
+        cpu_repeats_ns=cpu_repeats,
+        mem_repeats_ns=mem_repeats,
     )

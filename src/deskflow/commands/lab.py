@@ -1,5 +1,6 @@
 """CLI commands for fault-injection lab operations."""
 
+import subprocess
 import sys
 import time
 from datetime import UTC, datetime
@@ -19,6 +20,35 @@ from deskflow.paths import get_data_dir
 
 app = typer.Typer(help="Manage and execute controlled fault-injection lab sessions.")
 console = Console()
+
+
+@app.command("demo-app")
+def demo_app_command(
+    memory_mb: int = typer.Option(2048, "--memory-mb"),
+    cpu_percent: float = typer.Option(0.0, "--cpu-percent"),
+    foreground: bool = typer.Option(False, "--foreground"),
+) -> None:
+    """Start the visible demo workload used by the remediation demonstration."""
+    try:
+        import tkinter  # noqa: F401
+    except ImportError:
+        console.print("[red]tkinter is unavailable; demo app cannot start.[/red]")
+        raise typer.Exit(1) from None
+    cmd = [
+        sys.executable,
+        "-m",
+        "deskflow.lab.demo_app",
+        "--memory-mb",
+        str(memory_mb),
+        "--cpu-percent",
+        str(cpu_percent),
+    ]
+    if foreground:
+        raise typer.Exit(subprocess.call(cmd))
+    flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    flags |= getattr(subprocess, "DETACHED_PROCESS", 0)
+    proc = subprocess.Popen(cmd, creationflags=flags)
+    console.print(f"Demo app started with PID {proc.pid}.")
 
 
 @app.command("list")

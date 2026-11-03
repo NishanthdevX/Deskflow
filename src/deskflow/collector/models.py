@@ -57,6 +57,8 @@ class ProbeResult:
     mem_ns: int
     disk_ns: int
     total_ns: int
+    cpu_repeats_ns: tuple[int, ...] = ()
+    mem_repeats_ns: tuple[int, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Convert probe result to JSON-serializable dictionary."""
@@ -65,7 +67,15 @@ class ProbeResult:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ProbeResult":
         """Reconstruct probe result from dictionary."""
-        return cls(**data)
+        return cls(
+            ts_utc=str(data["ts_utc"]),
+            cpu_ns=int(data["cpu_ns"]),
+            mem_ns=int(data["mem_ns"]),
+            disk_ns=int(data["disk_ns"]),
+            total_ns=int(data["total_ns"]),
+            cpu_repeats_ns=tuple(int(v) for v in data.get("cpu_repeats_ns", [])),
+            mem_repeats_ns=tuple(int(v) for v in data.get("mem_repeats_ns", [])),
+        )
 
 
 @dataclass(frozen=True)
@@ -122,6 +132,8 @@ class StorageReport:
     entries: list[StorageEntry]
     truncated: bool
     duration_s: float
+    entries_scanned: int = 0
+    roots_scanned: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Convert report to JSON-serializable dictionary."""
@@ -130,6 +142,8 @@ class StorageReport:
             "entries": [e.to_dict() for e in self.entries],
             "truncated": self.truncated,
             "duration_s": self.duration_s,
+            "entries_scanned": self.entries_scanned,
+            "roots_scanned": list(self.roots_scanned),
         }
 
     @classmethod
@@ -143,6 +157,8 @@ class StorageReport:
             entries=entries,
             truncated=bool(data["truncated"]),
             duration_s=float(data["duration_s"]),
+            entries_scanned=int(data.get("entries_scanned", 0)),
+            roots_scanned=tuple(str(v) for v in data.get("roots_scanned", [])),
         )
 
 

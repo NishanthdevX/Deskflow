@@ -165,6 +165,8 @@ class StorageScanner:
             entries=entries,
             truncated=truncated,
             duration_s=duration_s,
+            entries_scanned=total_entries_visited,
+            roots_scanned=tuple(location.path for location in locations),
         )
 
         with self._lock:

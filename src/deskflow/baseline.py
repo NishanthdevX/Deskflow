@@ -18,6 +18,7 @@ from deskflow.collector.probe import (
     MEM_PROBE_BYTES,
     MEM_PROBE_STRIDE,
     PROBE_REPEATS,
+    PROBE_WARMUP_MS,
     run_probe,
 )
 from deskflow.paths import get_config_dir
@@ -89,6 +90,7 @@ class Baseline:
     mem_bytes: int = MEM_PROBE_BYTES
     mem_stride: int = MEM_PROBE_STRIDE
     disk_bytes: int = DISK_PROBE_BYTES
+    probe_warmup_ms: int = PROBE_WARMUP_MS
 
     def to_dict(self) -> dict[str, Any]:
         """Convert baseline record to dictionary."""
@@ -116,6 +118,7 @@ class Baseline:
             mem_bytes=int(data.get("mem_bytes", MEM_PROBE_BYTES)),
             mem_stride=int(data.get("mem_stride", MEM_PROBE_STRIDE)),
             disk_bytes=int(data.get("disk_bytes", DISK_PROBE_BYTES)),
+            probe_warmup_ms=int(data.get("probe_warmup_ms", 0)),
         )
 
 
@@ -210,6 +213,11 @@ def load_baseline(
             f"Baseline for power state '{state}' not found in {target_path}. "
             f"Run 'deskflow baseline calibrate' while on {state} power."
         )
+    if target_baseline.probe_warmup_ms != PROBE_WARMUP_MS:
+        raise CalibrationError(
+            "Baseline probe settings do not match this Deskflow version. "
+            "Run 'deskflow baseline calibrate' again."
+        )
     return target_baseline
 
 
@@ -293,6 +301,7 @@ def calibrate_baseline(
         mem_bytes=MEM_PROBE_BYTES,
         mem_stride=MEM_PROBE_STRIDE,
         disk_bytes=DISK_PROBE_BYTES,
+        probe_warmup_ms=PROBE_WARMUP_MS,
     )
 
     save_baseline(baseline, power_state=power_state, path=out_path, config_dir=config_dir)
