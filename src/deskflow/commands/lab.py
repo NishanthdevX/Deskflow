@@ -47,7 +47,13 @@ def demo_app_command(
         raise typer.Exit(subprocess.call(cmd))
     flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     flags |= getattr(subprocess, "DETACHED_PROCESS", 0)
-    proc = subprocess.Popen(cmd, creationflags=flags)
+    proc = subprocess.Popen(
+        cmd,
+        creationflags=flags,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     console.print(f"Demo app started with PID {proc.pid}.")
 
 

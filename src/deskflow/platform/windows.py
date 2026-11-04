@@ -1,10 +1,13 @@
 """Windows platform adapter implementation."""
 
+from __future__ import annotations
+
 import ctypes
 import os
 import tempfile
 import time
 from ctypes import wintypes
+from typing import TYPE_CHECKING, Any
 
 import psutil
 
@@ -15,6 +18,9 @@ from deskflow.platform.base import (
     PlatformAdapter,
     ProcessMeta,
 )
+
+if TYPE_CHECKING:
+    from deskflow.collector.models import ProcessSample
 
 _WINDOWS_PROTECTED_PROCESSES = frozenset(
     {
@@ -477,3 +483,255 @@ class WindowsAdapter(PlatformAdapter):
     def never_offer_names(self) -> frozenset[str]:
         """Return lowercase set of process names that must never be offered for termination."""
         return _WINDOWS_NEVER_OFFER
+
+    def query_recycle_bin(self) -> tuple[int, int]:
+        """Return (num_items, total_size_bytes) in the Windows Recycle Bin."""
+        return _query_recycle_bin_win32()
+
+    def empty_recycle_bin(self) -> bool:
+        """Empty the Windows Recycle Bin across all drives without prompts."""
+        return _empty_recycle_bin_win32()
+
+    def app_cache_dirs(self) -> list[CacheLocation]:
+        """Return browser and application cache directories on Windows."""
+        return _get_browser_cache_dirs_win32()
+
+    def get_static_hardware(self) -> dict[str, Any]:
+        """Return static hardware facts: host model, CPU, GPUs, VRAM, and resolution."""
+        return _get_static_hardware_win32()
+
+    def full_process_snapshot(self) -> list[ProcessSample]:
+        """Return a complete process pass across the system for heavy-task analysis."""
+        return _full_process_snapshot_win32()
+
+
+class SHQUERYRBINFO(ctypes.Structure):
+    """Win32 SHQUERYRBINFO structure for SHQueryRecycleBinW."""
+
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("i64Size", ctypes.c_int64),
+        ("i64NumItems", ctypes.c_int64),
+    ]
+
+
+def _query_recycle_bin_win32() -> tuple[int, int]:
+    """Query total item count and bytes in the Windows Recycle Bin."""
+    try:
+        rb = SHQUERYRBINFO()
+        rb.cbSize = ctypes.sizeof(SHQUERYRBINFO)
+        hr = ctypes.windll.shell32.SHQueryRecycleBinW(None, ctypes.byref(rb))
+        if hr == 0:
+            return (int(rb.i64NumItems), int(rb.i64Size))
+    except Exception:
+        pass
+    return (0, 0)
+
+
+def _empty_recycle_bin_win32() -> bool:
+    """Empty the Windows Recycle Bin without UI or sound."""
+    try:
+        # SHERB_NOCONFIRMATION (0x1) | SHERB_NOPROGRESSUI (0x2) | SHERB_NOSOUND (0x4)
+        flags = 0x00000001 | 0x00000002 | 0x00000004
+        hr = ctypes.windll.shell32.SHEmptyRecycleBinW(None, None, wintypes.DWORD(flags))
+        return bool(hr == 0)
+    except Exception:
+        return False
+
+
+def _get_static_hardware_win32() -> dict[str, Any]:
+    """Read CPU, BIOS, GPU, and resolution from Windows registry and APIs."""
+    import winreg
+
+    info: dict[str, Any] = {
+        "host_model": "unknown",
+        "os_build": "unknown",
+        "cpu_model": "unknown",
+        "gpus": [],
+        "resolution": "unknown",
+    }
+
+    # Host model from BIOS
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\BIOS") as k:
+            mfr = str(winreg.QueryValueEx(k, "SystemManufacturer")[0]).strip()
+            prod = str(winreg.QueryValueEx(k, "SystemProductName")[0]).strip()
+            if mfr and prod:
+                info["host_model"] = f"{mfr} {prod}".strip()
+            elif prod:
+                info["host_model"] = prod
+    except Exception:
+        pass
+
+    # CPU model from CentralProcessor
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0"
+        ) as k:
+            cpu_name = str(winreg.QueryValueEx(k, "ProcessorNameString")[0]).strip()
+            if cpu_name:
+                info["cpu_model"] = cpu_name
+    except Exception:
+        pass
+
+    # Windows build and version
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+        ) as k:
+            build = str(winreg.QueryValueEx(k, "CurrentBuildNumber")[0]).strip()
+            try:
+                disp = str(winreg.QueryValueEx(k, "DisplayVersion")[0]).strip()
+            except FileNotFoundError:
+                disp = ""
+            info["os_build"] = f"{disp} (Build {build})".strip() if disp else f"Build {build}"
+    except Exception:
+        pass
+
+    # GPUs from display adapter class key
+    try:
+        class_guid = "{4d36e968-e325-11ce-bfc1-08002be10318}"
+        key_path = rf"SYSTEM\CurrentControlSet\Control\Class\{class_guid}"
+        gpus: list[dict[str, Any]] = []
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path) as k:
+            num_subkeys = winreg.QueryInfoKey(k)[0]
+            for i in range(num_subkeys):
+                sub = winreg.EnumKey(k, i)
+                if sub.isdigit():
+                    try:
+                        with winreg.OpenKey(k, sub) as sk:
+                            desc = str(winreg.QueryValueEx(sk, "DriverDesc")[0]).strip()
+                            vram_bytes = 0
+                            for v_name in [
+                                "HardwareInformation.qwMemorySize",
+                                "HardwareInformation.MemorySize",
+                            ]:
+                                try:
+                                    vram_bytes = int(winreg.QueryValueEx(sk, v_name)[0])
+                                    if vram_bytes > 0:
+                                        break
+                                except (FileNotFoundError, OSError):
+                                    pass
+                            if desc:
+                                gpus.append({"name": desc, "vram_bytes": vram_bytes})
+                    except Exception:
+                        pass
+        info["gpus"] = gpus
+    except Exception:
+        pass
+
+    # Resolution via GetSystemMetrics
+    try:
+        user32 = ctypes.windll.user32
+        w = int(user32.GetSystemMetrics(0))
+        h = int(user32.GetSystemMetrics(1))
+        if w > 0 and h > 0:
+            info["resolution"] = f"{w}x{h}"
+    except Exception:
+        pass
+
+    return info
+
+
+def _get_browser_cache_dirs_win32() -> list[CacheLocation]:
+    """Locate browser and app cache directories on Windows."""
+    import os
+    from pathlib import Path
+
+    localapp_str = os.environ.get("LOCALAPPDATA")
+    if not localapp_str:
+        return []
+
+    localapp = Path(localapp_str)
+    caches: list[CacheLocation] = []
+
+    chromium_browsers = [
+        ("Google Chrome", localapp / "Google" / "Chrome" / "User Data"),
+        ("Microsoft Edge", localapp / "Microsoft" / "Edge" / "User Data"),
+        ("Brave", localapp / "BraveSoftware" / "Brave-Browser" / "User Data"),
+        ("Opera", localapp / "Opera Software" / "Opera Stable"),
+        ("Opera GX", localapp / "Opera Software" / "Opera GX Stable"),
+    ]
+
+    for browser_name, user_data in chromium_browsers:
+        if not user_data.exists():
+            continue
+        if "Opera" in browser_name:
+            profile_dirs = [user_data]
+        else:
+            profile_dirs = [user_data / "Default"] + list(user_data.glob("Profile *"))
+
+        for p_dir in profile_dirs:
+            if not p_dir.is_dir():
+                continue
+            for cache_folder in ("Cache", "Code Cache", "GPUCache"):
+                target = p_dir / cache_folder
+                if target.exists() and target.is_dir():
+                    caches.append(
+                        CacheLocation(
+                            path=str(target),
+                            kind="cache",
+                            safe_to_clean=True,
+                            label=f"{browser_name} {cache_folder}",
+                        )
+                    )
+
+    ff_profiles = localapp / "Mozilla" / "Firefox" / "Profiles"
+    if ff_profiles.exists():
+        for p in ff_profiles.glob("*/cache2"):
+            if p.is_dir():
+                caches.append(
+                    CacheLocation(
+                        path=str(p),
+                        kind="cache",
+                        safe_to_clean=True,
+                        label="Mozilla Firefox cache2",
+                    )
+                )
+
+    return caches
+
+
+def _full_process_snapshot_win32() -> list[ProcessSample]:
+    """Capture full process pass across system for heavy-task ranking."""
+    import time
+
+    import psutil
+
+    from deskflow.collector.models import ProcessSample
+    from deskflow.safety import is_protected
+
+    now = time.time()
+    results: list[ProcessSample] = []
+    for proc in psutil.process_iter(
+        ["pid", "name", "username", "cpu_percent", "memory_info", "num_threads", "create_time"]
+    ):
+        try:
+            info = proc.info
+            pid = info["pid"]
+            if pid is None or pid <= 4:
+                continue
+            name = info.get("name") or "unknown"
+            user = info.get("username")
+            mem_info = info.get("memory_info")
+            rss = mem_info.rss if mem_info else 0
+            cpu = float(info.get("cpu_percent") or 0.0)
+            threads = int(info.get("num_threads") or 1)
+            create_t = float(info.get("create_time") or now)
+            age_s = max(0.0, now - create_t)
+
+            results.append(
+                ProcessSample(
+                    pid=pid,
+                    name=name,
+                    rss_bytes=rss,
+                    cpu_percent=cpu,
+                    num_threads=threads,
+                    age_s=age_s,
+                    is_protected=is_protected(name, pid, username=user),
+                )
+            )
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    return results

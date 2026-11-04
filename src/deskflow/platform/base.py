@@ -1,8 +1,13 @@
 """Abstract base class and data types for platform-specific adapters."""
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from deskflow.collector.models import ProcessSample
 
 
 @dataclass(frozen=True)
@@ -29,6 +34,7 @@ class CacheLocation:
     path: str
     kind: Literal["temp", "cache", "trash"]
     safe_to_clean: bool
+    label: str = ""
 
 
 @dataclass(frozen=True)
@@ -116,3 +122,29 @@ class PlatformAdapter(ABC):
     def never_offer_names(self) -> frozenset[str]:
         """Return lowercase set of process names that must never be offered for termination."""
         return frozenset()
+
+    def query_recycle_bin(self) -> tuple[int, int]:
+        """Return (num_items, total_size_bytes) in the system recycle bin or trash."""
+        return (0, 0)
+
+    def empty_recycle_bin(self) -> bool:
+        """Empty the system recycle bin or trash. Returns True on success."""
+        return False
+
+    def app_cache_dirs(self) -> list[CacheLocation]:
+        """Return browser and application cache directories (safe to delete cache only)."""
+        return []
+
+    def get_static_hardware(self) -> dict[str, Any]:
+        """Return static hardware facts: host model, CPU model, GPUs, VRAM, and resolution."""
+        return {
+            "host_model": "unknown",
+            "os_build": "unknown",
+            "cpu_model": "unknown",
+            "gpus": [],
+            "resolution": "unknown",
+        }
+
+    def full_process_snapshot(self) -> list[ProcessSample]:
+        """Return a complete process pass across the system for heavy-task analysis."""
+        return []

@@ -17,6 +17,21 @@ def capped_memory_mb(requested_mb: int) -> int:
 
 def run_demo(memory_mb: int, cpu_percent: float) -> int:
     """Run the visible tkinter demo process until its window is closed."""
+    import sys
+
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            u32 = ctypes.windll.user32
+            h_desk = u32.OpenDesktopW(
+                "Default", 0, False, 0x0100 | 0x0040 | 0x0001 | 0x0002 | 0x0020
+            )
+            if h_desk:
+                u32.SetThreadDesktop(h_desk)
+        except Exception:
+            pass
+
     try:
         import tkinter as tk
     except ImportError:

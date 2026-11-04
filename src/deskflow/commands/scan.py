@@ -1,5 +1,6 @@
 """Scan CLI command: measured system scan, primary model scoring, and health assessment."""
 
+import contextlib
 import json
 import logging
 import time
@@ -21,7 +22,7 @@ from deskflow.baseline import (
     load_baseline,
     save_baseline,
 )
-from deskflow.collector.models import Record
+from deskflow.collector.models import ProcessSample, Record
 from deskflow.collector.probe import run_probe
 from deskflow.collector.sampler import Sampler
 from deskflow.collector.storage import StorageScanner
@@ -137,6 +138,7 @@ def scan_command(
 
     # 2. Acquire Telemetry Records
     records: list[Record] = []
+    full_procs_snap: list[ProcessSample] = []
 
     if replay is not None:
         # Replay mode: load existing records from JSONL file
@@ -151,6 +153,8 @@ def scan_command(
         if not records:
             console.print("[red]Error: Replay file contained no records.[/red]")
             raise typer.Exit(code=1)
+        # Seed full process snapshot from replay top processes
+        full_procs_snap = records[-1].top_processes
     else:
         # Live Measuring
         # Enforce no sklearn / xgboost imports during this block!
@@ -162,12 +166,24 @@ def scan_command(
         sample_interval = 2.0
         probe_interval = 4.0
         last_probe_mono = -999.0
+        full_procs_10_done = False
+
+        # Phase 10: Full process pass at 0s
+        with contextlib.suppress(Exception):
+            full_procs_snap = adapter.full_process_snapshot()
 
         if output_json:
             # Silent live loop
             mono_start = time.monotonic()
             while (time.monotonic() - mono_start) < scan_seconds:
                 t_loop_start = time.monotonic()
+                spent = time.monotonic() - mono_start
+                # Phase 10: Full process pass at 10s
+                if not full_procs_10_done and spent >= 10.0:
+                    with contextlib.suppress(Exception):
+                        full_procs_snap = adapter.full_process_snapshot()
+                    full_procs_10_done = True
+
                 sys_sample, top_procs = sampler.sample()
                 probe_res = None
                 if (sys_sample.monotonic_s - last_probe_mono) >= (probe_interval - 0.2):
@@ -199,6 +215,13 @@ def scan_command(
                 mono_start = time.monotonic()
                 while (time.monotonic() - mono_start) < scan_seconds:
                     t_loop_start = time.monotonic()
+                    spent = time.monotonic() - mono_start
+                    # Phase 10: Full process pass at 10s
+                    if not full_procs_10_done and spent >= 10.0:
+                        with contextlib.suppress(Exception):
+                            full_procs_snap = adapter.full_process_snapshot()
+                        full_procs_10_done = True
+
                     sys_sample, top_procs = sampler.sample()
                     probe_res = None
                     if (sys_sample.monotonic_s - last_probe_mono) >= (probe_interval - 0.2):
@@ -214,7 +237,6 @@ def scan_command(
                         storage=None,
                     )
                     records.append(rec)
-                    spent = time.monotonic() - mono_start
                     progress.update(task, completed=min(scan_seconds, spent))
                     loop_spent = time.monotonic() - t_loop_start
                     sleep_s = max(0.05, sample_interval - loop_spent)
@@ -337,6 +359,16 @@ def scan_command(
         adapter=adapter,
     )
 
+    # Phase 10: Identify heavy background tasks from full process pass
+    from deskflow.remediation.actions import find_heavy_tasks
+
+    try:
+        heavy_tasks = find_heavy_tasks(
+            adapter, all_processes=full_procs_snap or cur_rec.top_processes
+        )
+    except Exception:
+        heavy_tasks = []
+
     infer_s = time.perf_counter() - t_infer_start
     total_s = time.perf_counter() - total_start
 
@@ -446,6 +478,15 @@ def scan_command(
                 }
                 for r in recs
             ],
+            "heavy_tasks": [
+                {
+                    "name": t.name,
+                    "process_count": t.process_count,
+                    "cpu_percent": round(t.cpu_percent, 2),
+                    "rss_mb": round(t.rss_bytes / (1024 * 1024), 2),
+                }
+                for t in heavy_tasks
+            ],
             "timings": {
                 "measuring_s": round(measuring_s, 2),
                 "storage_s": round(storage_s, 2),
@@ -458,6 +499,9 @@ def scan_command(
         return
 
     # 7. Human-readable CLI Output
+    import platform
+
+    from deskflow.commands.fix import run_fast_inventory
     from deskflow.ui.theme import use_plain_output
     from deskflow.ui.widgets import scan_dashboard
 
@@ -477,6 +521,39 @@ def scan_command(
     ]
     recommendation_rows = [(r.title, r.evidence, r.warning) for r in recs]
     baseline_age = get_baseline_age_str(baseline)
+
+    # Fast inventory tools for the ACTIONS area
+    try:
+        fix_tools = run_fast_inventory(adapter)
+    except Exception:
+        fix_tools = None
+
+    # Trend sparklines over last 12 seconds (last 6 records at 2s interval)
+    recent_records = records[-6:] if len(records) >= 6 else records
+    cpu_vals = [r.sample.cpu_percent_mean for r in recent_records]
+    mem_vals = [r.sample.mem_percent for r in recent_records]
+    disk_vals = [(r.sample.disk_busy_ms_per_s or 0.0) / 10.0 for r in recent_records]
+    swap_vals = [float(r.sample.swap_percent or 0.0) for r in recent_records]
+
+    cur_disk_busy = (cur_rec.sample.disk_busy_ms_per_s or 0.0) / 10.0
+    cur_swap = float(cur_rec.sample.swap_percent or 0.0)
+
+    resources_data = [
+        ("CPU", cur_rec.sample.cpu_percent_mean / 100.0, cpu_vals),
+        ("Memory", cur_rec.sample.mem_percent / 100.0, mem_vals),
+        ("Disk Busy", min(1.0, cur_disk_busy / 100.0), disk_vals),
+        ("Swap", min(1.0, cur_swap / 100.0), swap_vals),
+    ]
+
+    timings_dict = {
+        "measuring_s": measuring_s,
+        "storage_s": storage_s,
+        "model_load_s": model_load_s,
+        "inference_s": infer_s,
+        "total_s": total_s,
+    }
+    os_info = f"{platform.system()} {platform.release()}"
+
     for panel in scan_dashboard(
         baseline_age,
         power_state,
@@ -495,6 +572,11 @@ def scan_command(
         plain,
         anomaly_score=anomaly_score,
         anomaly_threshold=card.get("thresholds", {}).get("anomaly_threshold", 0.5),
+        heavy_tasks=heavy_tasks,
+        fix_tools=fix_tools,
+        resources=resources_data,
+        timings=timings_dict,
+        os_info=os_info,
     ):
         dashboard_console.print(panel)
     dashboard_console.print(f"Scan completed in {total_s:.1f}s.")

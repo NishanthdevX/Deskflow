@@ -1,8 +1,14 @@
-"""Fix CLI command: execute user-confirmed remediation actions and verify impact with re-scan."""
+"""Fix Center CLI: fast inventory, safe remediation execution, and re-scan verification."""
 
+from __future__ import annotations
+
+import contextlib
+import json
 import logging
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import typer
@@ -11,26 +17,172 @@ from rich.console import Console
 from rich.table import Table
 
 from deskflow.baseline import get_current_power_state, load_baseline
+from deskflow.collector.models import Record
 from deskflow.collector.probe import run_probe
 from deskflow.collector.sampler import Sampler
 from deskflow.collector.storage import StorageScanner
 from deskflow.features.extract import build_row
 from deskflow.health.score import compute_health_score
-from deskflow.ml.artifacts import load_model_card
+from deskflow.ml.artifacts import load_model_card, resolve_model_dir
+from deskflow.ml.runtime import RuntimeModels
 from deskflow.paths import get_data_dir
+from deskflow.platform.base import PlatformAdapter
 from deskflow.platform.factory import get_adapter
 from deskflow.remediation.actions import (
     ActionResult,
+    HeavyTaskGroup,
+    clean_app_caches,
     clean_temp,
     close_idle_apps,
-    end_busy_process,
+    empty_recycle_bin,
+    end_heavy_tasks,
+    find_heavy_tasks,
     trim_memory,
 )
+from deskflow.remediation.apps import find_idle_apps
 from deskflow.remediation.log import append_fix_log
-from deskflow.remediation.recommend import recommend_fixes
 
 logger = logging.getLogger(__name__)
+app = typer.Typer(help="Diagnose system, inspect fix tools, and execute verified remediations.")
 console = Console()
+
+
+@dataclass(frozen=True)
+class FixToolInfo:
+    """Metadata and measured potential for a Fix Center remediation tool."""
+
+    number: int
+    tool_id: str
+    title: str
+    risk: str  # "SAFE" or "CAUTION"
+    potential_str: str
+    potential_bytes: int
+    what_it_changes: str
+    details: dict[str, Any]
+
+
+def run_fast_inventory(adapter: PlatformAdapter) -> list[FixToolInfo]:
+    """Execute fast inventory in < 5 seconds: 3s storage scan + one process pass."""
+    # 1. Fast storage scan (3s budget)
+    scanner = StorageScanner(adapter=adapter, time_budget_s=3.0)
+    storage_report = scanner.scan()
+    safe_roots = {loc.path.lower() for loc in adapter.temp_and_cache_dirs() if loc.safe_to_clean}
+    cleanable_temp_bytes = 0
+    if storage_report and storage_report.entries:
+        for entry in storage_report.entries:
+            if entry.kind in ("temp", "cache") and entry.path.lower() in safe_roots:
+                cleanable_temp_bytes += getattr(entry, "cleanable_bytes", entry.bytes)
+
+    # 2. Browser & app caches
+    app_cache_locs = adapter.app_cache_dirs()
+    total_app_cache_bytes = 0
+    app_cache_count = 0
+    for loc in app_cache_locs:
+        p = Path(loc.path)
+        if p.exists() and p.is_dir():
+            try:
+                for f in p.glob("*"):
+                    try:
+                        if f.is_file() and not f.is_symlink():
+                            total_app_cache_bytes += f.stat().st_size
+                            app_cache_count += 1
+                    except (PermissionError, OSError):
+                        pass
+            except (PermissionError, OSError):
+                pass
+
+    # 3. Recycle Bin
+    rb_items, rb_bytes = adapter.query_recycle_bin()
+
+    # 4. Full process pass
+    all_procs = adapter.full_process_snapshot()
+
+    # 5. Trim memory potential (non-protected RSS >= 50MB)
+    trim_procs = [
+        p for p in all_procs if not p.is_protected and p.rss_bytes >= 50 * 1024 * 1024 and p.pid > 4
+    ]
+    trim_bytes = sum(p.rss_bytes for p in trim_procs)
+
+    # 6. Idle apps
+    idle_apps = find_idle_apps(all_procs, adapter=adapter)
+    idle_bytes = sum(g.total_rss_bytes for g in idle_apps)
+
+    # 7. Heavy tasks
+    heavy_tasks = find_heavy_tasks(adapter, all_processes=all_procs)
+    heavy_bytes = sum(g.rss_bytes for g in heavy_tasks)
+
+    tools = [
+        FixToolInfo(
+            number=1,
+            tool_id="clean_temp",
+            title="Clean temporary files",
+            risk="SAFE",
+            potential_str=f"{cleanable_temp_bytes / (1024**2):.1f} MB cleanable",
+            potential_bytes=cleanable_temp_bytes,
+            what_it_changes="Deletes files older than 24h in temp roots",
+            details={"cleanable_bytes": cleanable_temp_bytes},
+        ),
+        FixToolInfo(
+            number=2,
+            tool_id="clean_app_caches",
+            title="Clean browser & app caches",
+            risk="SAFE",
+            potential_str=(f"{total_app_cache_bytes / (1024**2):.1f} MB ({app_cache_count} files)"),
+            potential_bytes=total_app_cache_bytes,
+            what_it_changes="Clears browser caches (pages load slower once)",
+            details={
+                "cache_bytes": total_app_cache_bytes,
+                "files_count": app_cache_count,
+            },
+        ),
+        FixToolInfo(
+            number=3,
+            tool_id="empty_recycle_bin",
+            title="Empty Recycle Bin / Trash",
+            risk="CAUTION",
+            potential_str=f"{rb_bytes / (1024**2):.1f} MB ({rb_items} items)",
+            potential_bytes=rb_bytes,
+            what_it_changes="Empties Recycle Bin permanently (irreversible)",
+            details={"items": rb_items, "bytes": rb_bytes},
+        ),
+        FixToolInfo(
+            number=4,
+            tool_id="trim_memory",
+            title="Trim process working sets",
+            risk="SAFE",
+            potential_str=f"{trim_bytes / (1024**2):.1f} MB across {len(trim_procs)} procs",
+            potential_bytes=trim_bytes,
+            what_it_changes="Reclaims memory working sets (effect is temporary)",
+            details={
+                "procs_count": len(trim_procs),
+                "rss_bytes": trim_bytes,
+                "candidates": trim_procs,
+            },
+        ),
+        FixToolInfo(
+            number=5,
+            tool_id="close_idle_apps",
+            title="Close idle windowed apps",
+            risk="CAUTION",
+            potential_str=(f"{idle_bytes / (1024**2):.1f} MB across {len(idle_apps)} app group(s)"),
+            potential_bytes=idle_bytes,
+            what_it_changes="Gracefully closes idle background windowed applications",
+            details={"groups": idle_apps, "all_procs": all_procs},
+        ),
+        FixToolInfo(
+            number=6,
+            tool_id="end_heavy_tasks",
+            title="End heavy background tasks",
+            risk="CAUTION",
+            potential_str=(
+                f"{heavy_bytes / (1024**2):.1f} MB across {len(heavy_tasks)} heavy task(s)"
+            ),
+            potential_bytes=heavy_bytes,
+            what_it_changes="Terminates top non-protected heavy background processes",
+            details={"groups": heavy_tasks, "all_procs": all_procs},
+        ),
+    ]
+    return tools
 
 
 def _gather_state(adapter: Any, baseline: Any, runtime: Any, card: Any) -> dict[str, Any]:
@@ -40,11 +192,8 @@ def _gather_state(adapter: Any, baseline: Any, runtime: Any, card: Any) -> dict[
     sampler = Sampler(adapter=adapter, interval_s=1.0)
     data_dir = get_data_dir()
 
-    # Run fresh probe
     probe_res = run_probe(data_dir=data_dir, repeats=3)
     sys_sample, top_procs = sampler.sample()
-
-    from deskflow.collector.models import Record
 
     rec = Record(
         schema_version=1,
@@ -87,12 +236,46 @@ def _gather_state(adapter: Any, baseline: Any, runtime: Any, card: Any) -> dict[
     }
 
 
+def _render_tools_table(tools: list[FixToolInfo], plain: bool = False) -> Table:
+    """Format the Fix Center tools table."""
+    from deskflow.ui.components import badge
+
+    table = Table(
+        title="[DESKFLOW FIX CENTER - TOOLS INVENTORY]",
+        box=box.ASCII if plain else box.ROUNDED,
+        show_header=True,
+    )
+    table.add_column("#", justify="center", style="bold cyan")
+    table.add_column("Tool", style="bold")
+    table.add_column("Risk", justify="center")
+    table.add_column("Measured Potential", justify="right")
+    table.add_column("What it changes")
+
+    for t in tools:
+        risk_cell = badge(t.risk, t.risk, plain=plain)
+        table.add_row(
+            str(t.number),
+            t.title,
+            risk_cell,
+            t.potential_str,
+            t.what_it_changes,
+        )
+    return table
+
+
+@app.callback(invoke_without_command=True)
 def fix_command(
     actions: list[str] = typer.Option(
         None,
         "--action",
         "-a",
-        help="One or more actions to execute directly (clean_temp, close_idle_apps, trim_memory).",
+        help="One or more tools to execute directly (e.g. clean_temp, 1, 2).",
+    ),
+    tool: list[str] = typer.Option(
+        None,
+        "--tool",
+        "-t",
+        help="Specify tool ID or number to execute directly.",
     ),
     dry_run: bool = typer.Option(
         False,
@@ -103,238 +286,367 @@ def fix_command(
         False,
         "--yes",
         "-y",
-        help="Bypass interactive selection and confirmation prompts.",
+        help="Execute SAFE tools without interactive prompting (never CAUTION).",
+    ),
+    include_caution: bool = typer.Option(
+        False,
+        "--include-caution",
+        help="Allow execution of CAUTION tools with --yes or unattended mode.",
+    ),
+    list_tools: bool = typer.Option(
+        False,
+        "--list",
+        "-l",
+        help="Print tools inventory table without prompting.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output inventory or results as JSON.",
     ),
     no_rescan: bool = typer.Option(
         False,
         "--no-rescan",
-        help="Skip post-fix verification scan.",
+        help="Skip post-fix verification re-scan.",
     ),
     force: bool = typer.Option(
         False,
         "--force",
-        help="Allow process termination after graceful close timeout with typed confirmation.",
+        help="Allow process termination after graceful timeout with typed confirmation.",
     ),
-    plain: bool = typer.Option(False, "--plain"),
+    plain: bool = typer.Option(False, "--plain", help="Pure ASCII output."),
 ) -> None:
-    """Diagnose system, execute confirmed safe remediation actions, and re-scan impact."""
+    """Diagnose system, execute confirmed safe remediation actions, and verify with re-scan."""
     from deskflow.ui.theme import use_plain_output
 
     plain = use_plain_output(plain)
-    console = Console(no_color=plain)
     adapter = get_adapter()
     power_state = get_current_power_state(adapter)
 
-    try:
-        baseline = load_baseline(power_state=power_state)
-    except FileNotFoundError as err:
-        err_msg = (
-            "[red]Error: Baseline required for fix scan. "
-            "Run 'deskflow baseline calibrate' first.[/red]"
-        )
-        console.print(err_msg)
-        raise typer.Exit(code=1) from err
+    # 1. Fast Inventory
+    tools = run_fast_inventory(adapter)
 
-    from deskflow.ml.artifacts import resolve_model_dir
-    from deskflow.ml.runtime import RuntimeModels
-
-    try:
-        model_dir, _is_bundled = resolve_model_dir()
-    except FileNotFoundError as err:
-        console.print("[red]Error: No trained model set found. Run 'deskflow train' first.[/red]")
-        raise typer.Exit(code=1) from err
-
-    card = load_model_card(model_dir)
-    runtime = RuntimeModels.load(model_dir)
-
-    console.print("[bold]Diagnosing current system state...[/bold]")
-    before = _gather_state(adapter=adapter, baseline=baseline, runtime=runtime, card=card)
-
-    console.print(
-        f"Initial Health Score: [bold]{before['score']}/100 ({before['label']})[/bold] | "
-        f"Predicted Slowdown: {before['predicted_ratio']:.2f}x | "
-        f"Probe: {before['probe_ms']:.1f} ms"
-    )
-
-    recs = recommend_fixes(
-        top_processes=before["top_processes"],
-        storage_report=before["storage_report"],
-        issue_tag="healthy",
-        is_anomaly=False,
-        adapter=adapter,
-    )
-
-    # Resolve actions to run
-    chosen_actions: list[str] = []
-
-    if actions:
-        chosen_actions = list(actions)
-    else:
-        if not recs:
-            console.print("[green]No remediation actions needed. System is healthy.[/green]")
-            return
-
-        console.print("\n[bold]Available Fix Actions:[/bold]")
-        for idx, r in enumerate(recs, start=1):
-            warn_str = f"\n     [yellow]Warning: {r.warning}[/yellow]" if r.warning else ""
-            console.print(
-                f"  {idx}. [bold]{r.title}[/bold] ({r.action_id}): {r.evidence}{warn_str}"
-            )
-
-        if yes:
-            chosen_actions = [r.action_id for r in recs]
+    # If --list flag is given, display inventory and exit
+    if list_tools:
+        if json_output:
+            tools_data = [
+                {
+                    "number": t.number,
+                    "tool_id": t.tool_id,
+                    "title": t.title,
+                    "risk": t.risk,
+                    "potential": t.potential_str,
+                    "potential_bytes": t.potential_bytes,
+                    "what_it_changes": t.what_it_changes,
+                }
+                for t in tools
+            ]
+            console.print_json(json.dumps(tools_data))
         else:
-            selection = typer.prompt(
-                "\nSelect action numbers to execute (comma-separated, default none)",
-                default="",
-                show_default=False,
-            )
-            if not selection.strip():
-                console.print("No actions selected. Exiting.")
-                return
-
-            indices = [int(s.strip()) for s in selection.split(",") if s.strip().isdigit()]
-            for i in indices:
-                if 1 <= i <= len(recs):
-                    chosen_actions.append(recs[i - 1].action_id)
-
-    if not chosen_actions:
-        console.print("No valid actions selected. Exiting.")
+            console.print(_render_tools_table(tools, plain=plain))
         return
 
-    # Confirmation
-    if not dry_run and not yes:
-        action_names = ", ".join(chosen_actions)
-        confirmed = typer.confirm(f"Execute action(s): {action_names}?", default=True)
-        if not confirmed:
-            console.print("Aborted by user.")
+    # Check baseline & models for re-scan
+    baseline = None
+    with contextlib.suppress(Exception):
+        baseline = load_baseline(power_state=power_state)
+
+    runtime = None
+    card = {}
+    with contextlib.suppress(Exception):
+        model_dir, _ = resolve_model_dir()
+        card = load_model_card(model_dir)
+        runtime = RuntimeModels.load(model_dir)
+
+    # Gather baseline state
+    before: dict[str, Any] | None = None
+    if baseline and runtime:
+        console.print("[dim]Diagnosing current system state...[/dim]")
+        before = _gather_state(adapter=adapter, baseline=baseline, runtime=runtime, card=card)
+
+    # Combine input tools from --tool and --action
+    input_specs: list[str] = []
+    if actions:
+        input_specs.extend(actions)
+    if tool:
+        input_specs.extend(tool)
+
+    chosen_tools: list[FixToolInfo] = []
+
+    if input_specs:
+        tool_by_id = {t.tool_id.lower(): t for t in tools}
+        tool_by_num = {str(t.number): t for t in tools}
+        for spec in input_specs:
+            s_clean = spec.strip().lower()
+            if s_clean in ("all", "*"):
+                chosen_tools = list(tools)
+                break
+            elif s_clean == "safe":
+                for t in tools:
+                    if t.risk == "SAFE" and t not in chosen_tools:
+                        chosen_tools.append(t)
+            elif s_clean in tool_by_num:
+                t = tool_by_num[s_clean]
+                if t not in chosen_tools:
+                    chosen_tools.append(t)
+            elif s_clean in tool_by_id:
+                t = tool_by_id[s_clean]
+                if t not in chosen_tools:
+                    chosen_tools.append(t)
+            elif s_clean == "end_busy_process":  # backward compatibility alias
+                t = tool_by_id["end_heavy_tasks"]
+                if t not in chosen_tools:
+                    chosen_tools.append(t)
+    elif yes:
+        # --yes automatically selects all SAFE tools; NEVER CAUTION unless --include-caution
+        for t in tools:
+            if t.risk == "SAFE" or include_caution:
+                chosen_tools.append(t)
+    else:
+        # Interactive Fix Center mode
+        console.print(_render_tools_table(tools, plain=plain))
+        console.print(
+            "\n[bold cyan]Select tools to run (e.g. '1,2,4'), 'safe' for SAFE tools, "
+            "or 'Q' to quit:[/bold cyan]"
+        )
+        choice = typer.prompt("Select", default="safe", show_default=True).strip()
+        if choice.upper() in ("Q", "QUIT"):
+            console.print("Exited Fix Center.")
             return
+
+        tool_by_num = {str(t.number): t for t in tools}
+        if choice.lower() == "safe":
+            chosen_tools = [t for t in tools if t.risk == "SAFE"]
+        elif choice.lower() in ("all", "*"):
+            chosen_tools = list(tools)
+        else:
+            for item in choice.replace(" ", ",").split(","):
+                part = item.strip()
+                if part in tool_by_num:
+                    t = tool_by_num[part]
+                    if t not in chosen_tools:
+                        chosen_tools.append(t)
+
+    if not chosen_tools:
+        console.print("[yellow]No tools selected. Exiting.[/yellow]")
+        return
+
+    # Filter out CAUTION tools if --yes was specified without --include-caution
+    if yes and not include_caution:
+        skipped_caution = [t.title for t in chosen_tools if t.risk == "CAUTION"]
+        chosen_tools = [t for t in chosen_tools if t.risk == "SAFE"]
+        if skipped_caution:
+            console.print(
+                f"[yellow]Note: Skipped CAUTION tools under --yes: "
+                f"{', '.join(skipped_caution)} (use --include-caution to run).[/yellow]"
+            )
+
+    # Validate CAUTION tool confirmation in interactive mode or prompt
+    confirmed_tools: list[FixToolInfo] = []
+    for t in chosen_tools:
+        if t.risk == "SAFE" or dry_run or (yes and include_caution):
+            confirmed_tools.append(t)
+            continue
+
+        # Interactive CAUTION tool preview and confirmation
+        console.print(f"\n[bold yellow][CAUTION TOOL: {t.title.upper()}][/bold yellow]")
+        if t.tool_id == "empty_recycle_bin":
+            rb_items = t.details.get("items", 0)
+            rb_bytes = t.details.get("bytes", 0)
+            console.print(
+                f"Recycle Bin contains {rb_items} item(s) totalling {rb_bytes / (1024**2):.1f} MB."
+            )
+            console.print("[bold red]This will permanently delete all recycled files.[/bold red]")
+            typed = typer.prompt("Type 'EMPTY' to confirm Recycle Bin deletion", default="")
+            if typed.strip() == "EMPTY":
+                confirmed_tools.append(t)
+            else:
+                console.print(f"[dim]Skipped {t.title}.[/dim]")
+
+        elif t.tool_id == "close_idle_apps":
+            groups = t.details.get("groups", [])
+            if not groups:
+                console.print("No idle applications currently eligible to be closed.")
+                confirmed_tools.append(t)
+            else:
+                console.print("The following idle application groups will be gracefully closed:")
+                for g in groups:
+                    console.print(
+                        f"  - {g.name}: {len(g.pids)} process(es), "
+                        f"{g.total_rss_bytes / (1024**2):.1f} MB RSS (PIDs: {list(g.pids)})"
+                    )
+                if typer.confirm("Close these idle applications?", default=False):
+                    confirmed_tools.append(t)
+                else:
+                    console.print(f"[dim]Skipped {t.title}.[/dim]")
+
+        elif t.tool_id == "end_heavy_tasks":
+            heavy_groups: list[HeavyTaskGroup] = t.details.get("groups", [])
+            if not heavy_groups:
+                console.print("No heavy background tasks currently eligible to be ended.")
+                confirmed_tools.append(t)
+            else:
+                console.print("Top heavy tasks identified (largest 5):")
+                for hg in heavy_groups[:5]:
+                    console.print(
+                        f"  - {hg.name}: {hg.process_count} proc(s), {hg.cpu_percent:.1f}% CPU, "
+                        f"{hg.rss_bytes / (1024**2):.1f} MB RSS (PIDs: {list(hg.pids)})"
+                    )
+                if typer.confirm("End these heavy background tasks?", default=False):
+                    confirmed_tools.append(t)
+                else:
+                    console.print(f"[dim]Skipped {t.title}.[/dim]")
+
+    if not confirmed_tools:
+        console.print("[yellow]No confirmed tools to execute.[/yellow]")
+        return
+
+    # Execute tools
+    console.print(f"\n[bold]{'[Dry-run] Simulating' if dry_run else 'Executing'} actions...[/bold]")
+    results: list[ActionResult] = []
 
     def _confirm_force(app_name: str, pid: int) -> bool:
         console.print(
             f"\n[bold red]WARNING: Graceful close timed out. "
             f"Unsaved work in {app_name} will be lost.[/bold red]"
         )
-        typed: str = typer.prompt(
+        typed_kill = typer.prompt(
             f"Force terminate {app_name} (PID {pid})? Type 'yes' to kill",
             default="no",
             show_default=False,
         )
-        return bool(typed.strip().lower() == "yes")
+        return bool(typed_kill.strip().lower() == "yes")
 
-    # Execute Actions
-    results: list[ActionResult] = []
-    console.print("\n[bold]Executing actions...[/bold]")
-
-    for act in chosen_actions:
-        if act == "clean_temp":
+    for t in confirmed_tools:
+        if t.tool_id == "clean_temp":
             res = clean_temp(adapter=adapter, dry_run=dry_run)
-        elif act == "close_idle_apps":
+        elif t.tool_id == "clean_app_caches":
+            res = clean_app_caches(adapter=adapter, dry_run=dry_run)
+        elif t.tool_id == "empty_recycle_bin":
+            res = empty_recycle_bin(adapter=adapter, dry_run=dry_run, confirmed=True)
+        elif t.tool_id == "trim_memory":
+            res = trim_memory(
+                t.details.get("candidates", []),
+                adapter=adapter,
+                dry_run=dry_run,
+            )
+        elif t.tool_id == "close_idle_apps":
             res = close_idle_apps(
-                before["top_processes"],
+                t.details.get("all_procs", []),
                 adapter=adapter,
                 dry_run=dry_run,
                 force=force,
                 confirm_force_cb=_confirm_force if force else None,
             )
-        elif act == "end_busy_process":
-            res = end_busy_process(
-                before["top_processes"],
+        elif t.tool_id == "end_heavy_tasks":
+            res = end_heavy_tasks(
                 adapter=adapter,
                 dry_run=dry_run,
                 force=force,
+                all_processes=t.details.get("all_procs", []),
                 confirm_force_cb=_confirm_force if force else None,
             )
-        elif act == "trim_memory":
-            res = trim_memory(before["top_processes"], adapter=adapter, dry_run=dry_run)
         else:
-            res = ActionResult(action=act, success=False, message=f"Unknown action: {act}")
+            res = ActionResult(
+                action=t.tool_id,
+                success=False,
+                message=f"Unknown tool: {t.tool_id}",
+            )
 
         results.append(res)
-        status_color = "green" if res.success else "red"
-        console.print(f"[{status_color}]* {act}: {res.message}[/{status_color}]")
+        color = "green" if res.success else "red"
+        console.print(f"[{color}]* {t.title}: {res.message}[/{color}]")
 
+    # Post-fix ML re-scan
     after: dict[str, Any] | None = None
-
-    if not dry_run and not no_rescan:
+    if not dry_run and not no_rescan and baseline and runtime and before:
         console.print("\nWaiting 3 seconds for system state to stabilize...")
         time.sleep(3.0)
-
         console.print("[bold]Running verification re-scan...[/bold]")
         after = _gather_state(adapter=adapter, baseline=baseline, runtime=runtime, card=card)
 
-        # Before & After Table
-        table = Table(
-            title="Remediation Verification",
-            box=box.ASCII if plain else box.SQUARE,
+        # Before & After Table (docs/DESIGN.md: [ BEFORE / AFTER ])
+        table_ver = Table(
+            title="[ BEFORE / AFTER: Remediation Verification ]",
+            box=box.ASCII if plain else box.ROUNDED,
             show_header=True,
         )
-        table.add_column("Metric", style="bold")
-        table.add_column("Before", justify="right")
-        table.add_column("After", justify="right")
-        table.add_column("Change", justify="right")
+        table_ver.add_column("Metric", style="bold")
+        table_ver.add_column("Before", justify="right")
+        table_ver.add_column("After", justify="right")
+        table_ver.add_column("Delta", justify="right")
+
+        def _fmt_delta(val: float, is_better_when_higher: bool, unit: str = "") -> str:
+            sign = "+" if val >= 0 else ""
+            txt = f"{sign}{val}{unit}"
+            if plain or val == 0:
+                return txt
+            is_good = (val > 0) if is_better_when_higher else (val < 0)
+            col = "spring_green2" if is_good else "red1"
+            return f"[{col}]{txt}[/{col}]"
 
         score_diff = after["score"] - before["score"]
-        s_sign = "+" if score_diff >= 0 else ""
-        table.add_row(
+        table_ver.add_row(
             "Health Score",
             f"{before['score']}/100",
             f"{after['score']}/100",
-            f"{s_sign}{score_diff}",
+            _fmt_delta(score_diff, is_better_when_higher=True),
         )
 
-        ratio_diff = after["predicted_ratio"] - before["predicted_ratio"]
-        r_sign = "+" if ratio_diff >= 0 else ""
-        table.add_row(
+        ratio_diff = round(after["predicted_ratio"] - before["predicted_ratio"], 2)
+        table_ver.add_row(
             "Predicted Slowdown",
             f"{before['predicted_ratio']:.2f}x",
             f"{after['predicted_ratio']:.2f}x",
-            f"{r_sign}{ratio_diff:.2f}x",
+            _fmt_delta(ratio_diff, is_better_when_higher=False, unit="x"),
         )
 
-        probe_diff = after["probe_ms"] - before["probe_ms"]
-        p_sign = "+" if probe_diff >= 0 else ""
-        table.add_row(
+        probe_diff = round(after["probe_ms"] - before["probe_ms"], 1)
+        table_ver.add_row(
             "Probe Latency",
             f"{before['probe_ms']:.1f} ms",
             f"{after['probe_ms']:.1f} ms",
-            f"{p_sign}{probe_diff:.1f} ms",
+            _fmt_delta(probe_diff, is_better_when_higher=False, unit=" ms"),
         )
 
         mem_before_gb = before["available_memory_bytes"] / (1024**3)
         mem_after_gb = after["available_memory_bytes"] / (1024**3)
-        m_diff = mem_after_gb - mem_before_gb
-        m_sign = "+" if m_diff >= 0 else ""
-        table.add_row(
+        m_diff = round(mem_after_gb - mem_before_gb, 2)
+        table_ver.add_row(
             "Available Memory",
             f"{mem_before_gb:.2f} GB",
             f"{mem_after_gb:.2f} GB",
-            f"{m_sign}{m_diff:.2f} GB",
+            _fmt_delta(m_diff, is_better_when_higher=True, unit=" GB"),
         )
 
         temp_before_mb = before["temp_bytes"] / (1024 * 1024)
         temp_after_mb = after["temp_bytes"] / (1024 * 1024)
-        t_diff = temp_after_mb - temp_before_mb
-        t_sign = "+" if t_diff >= 0 else ""
-        table.add_row(
+        t_diff = round(temp_after_mb - temp_before_mb, 1)
+        table_ver.add_row(
             "Cleanable Temp",
             f"{temp_before_mb:.1f} MB",
             f"{temp_after_mb:.1f} MB",
-            f"{t_sign}{t_diff:.1f} MB",
+            _fmt_delta(t_diff, is_better_when_higher=False, unit=" MB"),
         )
 
-        console.print(table)
+        measured_freed = sum(r.bytes_freed for r in results if r.success)
+        freed_mb = measured_freed / (1024**2)
+        freed_delta = (
+            f"+{freed_mb:.1f} MB" if plain else f"[spring_green2]+{freed_mb:.1f} MB[/spring_green2]"
+        )
+        table_ver.add_row(
+            "Measured Freed Bytes",
+            "-",
+            f"{freed_mb:.1f} MB",
+            freed_delta,
+        )
 
-        if after["score"] > before["score"]:
-            console.print("[green]Health score improved successfully.[/green]")
-        elif after["score"] == before["score"]:
-            console.print("[yellow]Health score remained unchanged.[/yellow]")
-        else:
-            console.print("[yellow]Health score did not improve after remediation.[/yellow]")
+        console.print(table_ver)
     elif dry_run:
         console.print("\n[dim]Dry run complete. No modifications were made to the system.[/dim]")
 
-    # Audit Logging (Fix log honesty: dry-run records store estimated_* and null bytes_freed/after)
+    # Fix Log Persistence with Honesty Guarantees
+    utc_str = datetime.now(tz=UTC).isoformat()
     if dry_run:
         results_log = [
             {
@@ -348,17 +660,18 @@ def fix_command(
             for r in results
         ]
         log_record = {
-            "ts_utc": datetime.now(UTC).isoformat(),
-            "actions": chosen_actions,
+            "ts_utc": utc_str,
             "dry_run": True,
+            "actions": [t.tool_id for t in confirmed_tools],
             "results": results_log,
             "before": {
                 "score": before["score"],
                 "predicted_ratio": before["predicted_ratio"],
                 "probe_ms": before["probe_ms"],
                 "available_memory_bytes": before["available_memory_bytes"],
-                "temp_bytes": before["temp_bytes"],
-            },
+            }
+            if before
+            else None,
             "after": None,
         }
     else:
@@ -373,27 +686,27 @@ def fix_command(
             for r in results
         ]
         log_record = {
-            "ts_utc": datetime.now(UTC).isoformat(),
-            "actions": chosen_actions,
+            "ts_utc": utc_str,
             "dry_run": False,
+            "actions": [t.tool_id for t in confirmed_tools],
             "results": results_log,
             "before": {
                 "score": before["score"],
                 "predicted_ratio": before["predicted_ratio"],
                 "probe_ms": before["probe_ms"],
                 "available_memory_bytes": before["available_memory_bytes"],
-                "temp_bytes": before["temp_bytes"],
-            },
+            }
+            if before
+            else None,
             "after": {
                 "score": after["score"],
                 "predicted_ratio": after["predicted_ratio"],
                 "probe_ms": after["probe_ms"],
                 "available_memory_bytes": after["available_memory_bytes"],
-                "temp_bytes": after["temp_bytes"],
             }
-            if after is not None
+            if after
             else None,
         }
 
     log_path = append_fix_log(log_record)
-    console.print(f"[dim]Fix execution logged to {log_path}[/dim]")
+    console.print(f"[dim]Audit record appended to {log_path.name}[/dim]")

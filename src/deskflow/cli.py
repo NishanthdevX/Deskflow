@@ -6,8 +6,6 @@ import sys
 from collections.abc import Callable
 
 import psutil
-from rich import box
-from rich.panel import Panel
 
 from deskflow import __version__
 
@@ -19,9 +17,11 @@ import typer
 from rich.console import Console
 
 from deskflow.commands.baseline import app as baseline_app
+from deskflow.commands.check import app as check_app
 from deskflow.commands.collect import app as collect_app
 from deskflow.commands.dataset import app as dataset_app
 from deskflow.commands.doctor import app as doctor_app
+from deskflow.commands.fix import app as fix_app
 from deskflow.commands.info import app as info_app
 from deskflow.commands.lab import app as lab_app
 from deskflow.commands.models import models_app
@@ -51,6 +51,8 @@ app.add_typer(watch_app, name="watch")
 app.add_typer(report_app, name="report")
 app.add_typer(prep_app, name="prep")
 app.add_typer(info_app, name="info")
+app.add_typer(check_app, name="check")
+app.add_typer(fix_app, name="fix")
 
 
 def show_home_menu(input_fn: Callable[[str], str] = input) -> None:
@@ -61,29 +63,17 @@ def show_home_menu(input_fn: Callable[[str], str] = input) -> None:
         load_baseline,
     )
     from deskflow.platform.factory import get_adapter
+    from deskflow.ui.components import banner, domain_panel
+    from deskflow.ui.theme import use_plain_output
 
     console = Console()
     adapter = get_adapter()
+    plain = use_plain_output()
 
     while True:
         # 1. Header Banner
         cols, _ = shutil.get_terminal_size(fallback=(100, 30))
-        if cols >= 80:
-            console.print(
-                "[bright_cyan bold]"
-                "  ____  _____ ____  _  __\n"
-                " |  _ \\| ____/ ___|| |/ /\n"
-                " | | | |  _| \\___ \\| ' / \n"
-                " | |_| | |___ ___) | . \\ \n"
-                " |____/|_____|____/|_|\\_\\"
-                "[/bright_cyan bold]"
-            )
-            console.print(
-                f"[dim]DESKFLOW v{__version__} - "
-                f"Device health scan with ML slowdown prediction[/dim]\n"
-            )
-        else:
-            console.print(f"[bright_cyan bold]DESKFLOW v{__version__}[/bright_cyan bold]\n")
+        console.print(banner(version=__version__, width=cols, plain=plain))
 
         # 2. THIS MACHINE panel
         pwr_state = get_current_power_state(adapter)
@@ -105,35 +95,39 @@ def show_home_menu(input_fn: Callable[[str], str] = input) -> None:
             f"RAM: {ram_gb:.1f} GB  |  Power: {pwr_info}  |  Baseline: {b_state}"
         )
         console.print(
-            Panel(
+            domain_panel(
+                "[THIS MACHINE]",
                 machine_str,
-                title="[THIS MACHINE]",
-                box=box.ROUNDED,
-                border_style="grey50",
+                domain="system",
+                plain=plain,
             )
         )
 
-        # 3. Menu Options
+        # 3. Menu Options matching docs/DESIGN.md v2 exactly
         console.print("[bold cyan][1][/bold cyan] Full check   scan, fixes and report in one run")
         console.print("[bold cyan][2][/bold cyan] Quick scan   14 s health score and prediction")
-        console.print("[bold cyan][3][/bold cyan] Fix Center   clean cache, free RAM, close tasks")
-        console.print("[bold cyan][4][/bold cyan] Live watch   predictions vs reality, comparison")
+        console.print(
+            "[bold cyan][3][/bold cyan] Fix Center   clean cache, free memory, close heavy tasks"
+        )
+        console.print(
+            "[bold cyan][4][/bold cyan] Live watch   predictions versus reality, model comparison"
+        )
         console.print("[bold cyan][5][/bold cyan] System info  CPU, GPU, memory, disks")
         console.print("[bold cyan][6][/bold cyan] Report       graphs and model comparison")
         console.print("[bold cyan][7][/bold cyan] Prepare demo readiness checklist")
         console.print("[dim][Q] Quit[/dim]\n")
 
-        choice = input_fn("Select: ").strip()
+        try:
+            choice = input_fn("Select: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            break
+
         if choice.upper() in ("Q", "QUIT"):
             break
         elif choice == "1":
-            from deskflow.commands.fix import fix_command
-            from deskflow.commands.report import report_command
-            from deskflow.commands.scan import scan_command
+            from deskflow.commands.check import check_command
 
-            scan_command()
-            fix_command(dry_run=True)
-            report_command()
+            check_command(input_fn=input_fn)
         elif choice == "2":
             from deskflow.commands.scan import scan_command
 
@@ -141,7 +135,7 @@ def show_home_menu(input_fn: Callable[[str], str] = input) -> None:
         elif choice == "3":
             from deskflow.commands.fix import fix_command
 
-            fix_command(dry_run=True)
+            fix_command(dry_run=False)
         elif choice == "4":
             from deskflow.commands.watch import watch_command
 
@@ -276,47 +270,6 @@ def scan(
         timing=timing,
         replay=Path(replay) if replay else None,
         yes=yes,
-        plain=plain,
-    )
-
-
-@app.command(
-    "fix",
-    help="Execute safe, user-confirmed remediation actions and verify impact with re-scan.",
-)
-def fix(
-    action: list[str] = typer.Option(
-        None,
-        "--action",
-        "-a",
-        help="One or more actions to execute directly (clean_temp, close_idle_apps, trim_memory).",
-    ),
-    dry_run: bool = typer.Option(
-        False,
-        "--dry-run",
-        help="Simulate actions and print expected impact without making changes.",
-    ),
-    yes: bool = typer.Option(
-        False,
-        "--yes",
-        "-y",
-        help="Bypass interactive selection and confirmation prompts.",
-    ),
-    no_rescan: bool = typer.Option(
-        False,
-        "--no-rescan",
-        help="Skip post-fix verification scan.",
-    ),
-    plain: bool = typer.Option(False, "--plain", help="Use ASCII-only, uncoloured output."),
-) -> None:
-    """Execute safe remediation actions and verify impact with re-scan."""
-    from deskflow.commands.fix import fix_command
-
-    fix_command(
-        actions=action,
-        dry_run=dry_run,
-        yes=yes,
-        no_rescan=no_rescan,
         plain=plain,
     )
 

@@ -124,6 +124,142 @@ def clean_temp(
     )
 
 
+def clean_app_caches(
+    adapter: PlatformAdapter,
+    dry_run: bool = False,
+    selected_browsers: list[str] | None = None,
+) -> ActionResult:
+    """Clean browser and app cache directories without touching profiles or history.
+
+    SAFE: Never deletes profiles, cookies, history, or passwords.
+    Note: 'pages load slower once'.
+    """
+    total_bytes_deleted = 0
+    total_files_deleted = 0
+    skipped_files = 0
+    per_browser_bytes: dict[str, int] = {}
+
+    cache_locs = adapter.app_cache_dirs()
+    for loc in cache_locs:
+        if not loc.safe_to_clean:
+            continue
+        if (
+            selected_browsers
+            and loc.label
+            and not any(b.lower() in loc.label.lower() for b in selected_browsers)
+        ):
+            continue
+
+        loc_path = Path(loc.path)
+        if not loc_path.exists() or not loc_path.is_dir():
+            continue
+
+        browser_key = loc.label or loc_path.name
+        loc_bytes = 0
+
+        for dirpath, dirnames, filenames in os.walk(str(loc_path), followlinks=False):
+            dirnames[:] = [d for d in dirnames if not os.path.islink(os.path.join(dirpath, d))]
+            for fname in filenames:
+                file_full = os.path.join(dirpath, fname)
+                try:
+                    if os.path.islink(file_full) or not os.path.isfile(file_full):
+                        continue
+                    file_size = os.path.getsize(file_full)
+                    if dry_run:
+                        total_bytes_deleted += file_size
+                        loc_bytes += file_size
+                        total_files_deleted += 1
+                    else:
+                        try:
+                            os.remove(file_full)
+                            total_bytes_deleted += file_size
+                            loc_bytes += file_size
+                            total_files_deleted += 1
+                        except (PermissionError, OSError):
+                            skipped_files += 1
+                except (PermissionError, OSError):
+                    skipped_files += 1
+
+        per_browser_bytes[browser_key] = per_browser_bytes.get(browser_key, 0) + loc_bytes
+
+    mb_freed = total_bytes_deleted / (1024 * 1024)
+    prefix = "[Dry-run] Would clean" if dry_run else "Cleaned"
+    msg = (
+        f"{prefix} {total_files_deleted} browser/app cache files ({mb_freed:.1f} MB). "
+        f"Note: pages load slower once."
+    )
+    return ActionResult(
+        action="clean_app_caches",
+        success=True,
+        message=msg,
+        bytes_freed=total_bytes_deleted,
+        dry_run=dry_run,
+        details={
+            "files_deleted": total_files_deleted,
+            "skipped_files": skipped_files,
+            "per_browser_bytes": per_browser_bytes,
+        },
+    )
+
+
+def empty_recycle_bin(
+    adapter: PlatformAdapter,
+    dry_run: bool = False,
+    confirmed: bool = False,
+) -> ActionResult:
+    """Empty system recycle bin or trash.
+
+    CAUTION: Permanent deletion.
+    """
+    items_count, size_bytes = adapter.query_recycle_bin()
+    mb = size_bytes / (1024 * 1024)
+
+    if items_count == 0 or size_bytes == 0:
+        return ActionResult(
+            action="empty_recycle_bin",
+            success=True,
+            message="Recycle Bin is already empty.",
+            bytes_freed=0,
+            dry_run=dry_run,
+            details={"items_count": 0, "size_bytes": 0},
+        )
+
+    if dry_run:
+        return ActionResult(
+            action="empty_recycle_bin",
+            success=True,
+            message=f"[Dry-run] Would empty Recycle Bin: {items_count} items ({mb:.1f} MB).",
+            bytes_freed=size_bytes,
+            dry_run=True,
+            details={"items_count": items_count, "size_bytes": size_bytes},
+        )
+
+    if not confirmed:
+        return ActionResult(
+            action="empty_recycle_bin",
+            success=False,
+            message="Recycle Bin emptying requires explicit confirmation.",
+            bytes_freed=0,
+            dry_run=False,
+            details={"items_count": items_count, "size_bytes": size_bytes},
+        )
+
+    success = adapter.empty_recycle_bin()
+    msg = (
+        f"Emptied Recycle Bin: {items_count} items ({mb:.1f} MB freed)."
+        if success
+        else "Failed to empty Recycle Bin."
+    )
+    return ActionResult(
+        action="empty_recycle_bin",
+        success=success,
+        message=msg,
+        bytes_freed=size_bytes if success else 0,
+        dry_run=False,
+        details={"items_count": items_count, "size_bytes": size_bytes},
+    )
+
+
 def close_idle_apps(
     processes: list[ProcessSample],
     adapter: PlatformAdapter | None = None,
@@ -181,18 +317,17 @@ def close_idle_apps(
         for pid in group.pids:
             # Graceful close first
             closed = eff_adapter.close_process_windows(pid, timeout_s=8.0)
-            if not closed:
-                if force:
-                    confirmed = False
-                    if confirm_force_cb is not None:
-                        confirmed = confirm_force_cb(group.name, pid)
-                    if confirmed:
-                        try:
-                            proc = psutil.Process(pid)
-                            proc.kill()
-                            closed = True
-                        except (psutil.NoSuchProcess, psutil.AccessDenied):
-                            closed = True
+            if not closed and force:
+                confirmed = False
+                if confirm_force_cb is not None:
+                    confirmed = confirm_force_cb(group.name, pid)
+                if confirmed:
+                    try:
+                        proc = psutil.Process(pid)
+                        proc.kill()
+                        closed = True
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        closed = True
                 else:
                     closed = False
 
@@ -306,6 +441,150 @@ def end_busy_process(
         action="end_busy_process",
         success=True,
         message=msg,
+        dry_run=dry_run,
+        details=details,
+    )
+
+
+@dataclass(frozen=True)
+class HeavyTaskGroup:
+    """Group of processes sharing an executable name ranked as heavy."""
+
+    name: str
+    pids: tuple[int, ...]
+    cpu_percent: float
+    rss_bytes: int
+    process_count: int
+
+
+def find_heavy_tasks(
+    adapter: PlatformAdapter,
+    all_processes: list[ProcessSample] | None = None,
+) -> list[HeavyTaskGroup]:
+    """Find top 5 by CPU and top 5 by memory from a full process pass.
+
+    Never touches deskflow tree, protected names, or NEVER_OFFER names.
+    """
+    procs = all_processes if all_processes is not None else adapter.full_process_snapshot()
+    deskflow_tree_pids = get_deskflow_process_tree_pids()
+    never_offer = {n.lower() for n in adapter.never_offer_names()}
+    protected = {n.lower() for n in adapter.protected_process_names()}
+
+    # Group by lowercase executable name
+    by_name: dict[str, list[ProcessSample]] = {}
+    for p in procs:
+        if p.is_protected or p.pid <= 4 or p.pid in deskflow_tree_pids:
+            continue
+        p_name_lower = p.name.lower()
+        if p_name_lower in never_offer or p_name_lower in protected:
+            continue
+        by_name.setdefault(p_name_lower, []).append(p)
+
+    groups: list[HeavyTaskGroup] = []
+    for _name_lower, plist in by_name.items():
+        disp_name = plist[0].name
+        tot_cpu = sum(p.cpu_percent for p in plist)
+        tot_rss = sum(p.rss_bytes for p in plist)
+        groups.append(
+            HeavyTaskGroup(
+                name=disp_name,
+                pids=tuple(p.pid for p in plist),
+                cpu_percent=tot_cpu,
+                rss_bytes=tot_rss,
+                process_count=len(plist),
+            )
+        )
+
+    # Top 5 by CPU and Top 5 by memory
+    top_cpu = sorted(groups, key=lambda g: g.cpu_percent, reverse=True)[:5]
+    top_mem = sorted(groups, key=lambda g: g.rss_bytes, reverse=True)[:5]
+
+    # Union preserving order (CPU top first, then MEM top)
+    combined: list[HeavyTaskGroup] = []
+    seen = set()
+    for g in top_cpu + top_mem:
+        if g.name.lower() not in seen:
+            seen.add(g.name.lower())
+            combined.append(g)
+
+    return combined
+
+
+def end_heavy_tasks(
+    adapter: PlatformAdapter,
+    dry_run: bool = False,
+    force: bool = False,
+    task_names: list[str] | None = None,
+    all_processes: list[ProcessSample] | None = None,
+    confirm_force_cb: Callable[[str, int], bool] | None = None,
+) -> ActionResult:
+    """End top heavy tasks identified from a full process pass.
+
+    CAUTION: Graceful-first escalation, NEVER_OFFER protected.
+    """
+    candidates = find_heavy_tasks(adapter, all_processes=all_processes)
+    if task_names:
+        selected_set = {t.lower() for t in task_names}
+        candidates = [g for g in candidates if g.name.lower() in selected_set]
+
+    if not candidates:
+        return ActionResult(
+            action="end_heavy_tasks",
+            success=True,
+            message="No eligible heavy background tasks found.",
+            dry_run=dry_run,
+        )
+
+    ended_count = 0
+    total_freed_bytes = 0
+    details: dict[str, Any] = {}
+    still_running: list[str] = []
+
+    for group in candidates:
+        details[group.name] = {
+            "pids": list(group.pids),
+            "cpu_percent": group.cpu_percent,
+            "rss_bytes": group.rss_bytes,
+            "process_count": group.process_count,
+        }
+        if dry_run:
+            ended_count += len(group.pids)
+            total_freed_bytes += group.rss_bytes
+            continue
+
+        for pid in group.pids:
+            closed = adapter.close_process_windows(pid, timeout_s=8.0)
+            if not closed and force:
+                confirmed = False
+                if confirm_force_cb is not None:
+                    confirmed = confirm_force_cb(group.name, pid)
+                if confirmed:
+                    try:
+                        proc = psutil.Process(pid)
+                        proc.kill()
+                        closed = True
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        closed = True
+            if closed:
+                ended_count += 1
+                total_freed_bytes += group.rss_bytes // max(1, group.process_count)
+            else:
+                still_running.append(f"{group.name} (PID {pid})")
+
+    prefix = "[Dry-run] Would end" if dry_run else "Ended"
+    mb = total_freed_bytes / (1024 * 1024)
+    msg = (
+        f"{prefix} {ended_count} process(es) across "
+        f"{len(candidates)} heavy task(s) holding {mb:.1f} MB."
+    )
+    if still_running:
+        msg += f" Note: {len(still_running)} process(es) still running: {', '.join(still_running)}."
+
+    return ActionResult(
+        action="end_heavy_tasks",
+        success=True,
+        message=msg,
+        bytes_freed=total_freed_bytes,
         dry_run=dry_run,
         details=details,
     )
