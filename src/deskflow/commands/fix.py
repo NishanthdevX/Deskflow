@@ -150,7 +150,10 @@ def run_fast_inventory(adapter: PlatformAdapter) -> list[FixToolInfo]:
             tool_id="trim_memory",
             title="Trim process working sets",
             risk="SAFE",
-            potential_str=f"{trim_bytes / (1024**2):.1f} MB across {len(trim_procs)} procs",
+            potential_str=(
+                f"{len(trim_procs)} processes using "
+                f"{trim_bytes / (1024**2):.1f} MB (reclaimable amount unknown)"
+            ),
             potential_bytes=trim_bytes,
             what_it_changes="Reclaims memory working sets (effect is temporary)",
             details={
@@ -175,7 +178,8 @@ def run_fast_inventory(adapter: PlatformAdapter) -> list[FixToolInfo]:
             title="End heavy background tasks",
             risk="CAUTION",
             potential_str=(
-                f"{heavy_bytes / (1024**2):.1f} MB across {len(heavy_tasks)} heavy task(s)"
+                f"{len(heavy_tasks)} heavy tasks using "
+                f"{heavy_bytes / (1024**2):.1f} MB (reclaimable amount unknown)"
             ),
             potential_bytes=heavy_bytes,
             what_it_changes="Terminates top non-protected heavy background processes",
@@ -291,7 +295,12 @@ def fix_command(
     include_caution: bool = typer.Option(
         False,
         "--include-caution",
-        help="Allow execution of CAUTION tools with --yes or unattended mode.",
+        help="Allow selection of CAUTION tools with --yes or unattended mode.",
+    ),
+    confirm_caution: str | None = typer.Option(
+        None,
+        "--confirm-caution",
+        help="Comma-separated IDs of CAUTION tools to confirm non-interactively.",
     ),
     list_tools: bool = typer.Option(
         False,
@@ -441,14 +450,35 @@ def fix_command(
                 f"{', '.join(skipped_caution)} (use --include-caution to run).[/yellow]"
             )
 
+    # Parse confirmed caution IDs from --confirm-caution
+    confirmed_caution_ids: set[str] = set()
+    if confirm_caution:
+        for cid in confirm_caution.replace(" ", ",").split(","):
+            c_str = cid.strip().lower()
+            if c_str:
+                confirmed_caution_ids.add(c_str)
+
     # Validate CAUTION tool confirmation in interactive mode or prompt
     confirmed_tools: list[FixToolInfo] = []
     for t in chosen_tools:
-        if t.risk == "SAFE" or dry_run or (yes and include_caution):
+        if t.risk == "SAFE" or dry_run:
             confirmed_tools.append(t)
             continue
 
-        # Interactive CAUTION tool preview and confirmation
+        # 1. Non-interactive confirmation via --confirm-caution
+        if t.tool_id.lower() in confirmed_caution_ids:
+            confirmed_tools.append(t)
+            continue
+
+        # 2. Under --yes or unattended mode, CAUTION tools require --confirm-caution
+        if yes:
+            console.print(
+                f"[yellow]Skipped CAUTION tool '{t.tool_id}' under --yes: "
+                f"unattended execution requires explicit --confirm-caution {t.tool_id}[/yellow]"
+            )
+            continue
+
+        # 3. Interactive typed confirmation of the tool id
         console.print(f"\n[bold yellow][CAUTION TOOL: {t.title.upper()}][/bold yellow]")
         if t.tool_id == "empty_recycle_bin":
             rb_items = t.details.get("items", 0)
@@ -457,8 +487,8 @@ def fix_command(
                 f"Recycle Bin contains {rb_items} item(s) totalling {rb_bytes / (1024**2):.1f} MB."
             )
             console.print("[bold red]This will permanently delete all recycled files.[/bold red]")
-            typed = typer.prompt("Type 'EMPTY' to confirm Recycle Bin deletion", default="")
-            if typed.strip() == "EMPTY":
+            typed = typer.prompt(f"Type '{t.tool_id}' to confirm permanent deletion", default="")
+            if typed.strip().lower() in (t.tool_id.lower(), "empty"):
                 confirmed_tools.append(t)
             else:
                 console.print(f"[dim]Skipped {t.title}.[/dim]")
@@ -475,7 +505,10 @@ def fix_command(
                         f"  - {g.name}: {len(g.pids)} process(es), "
                         f"{g.total_rss_bytes / (1024**2):.1f} MB RSS (PIDs: {list(g.pids)})"
                     )
-                if typer.confirm("Close these idle applications?", default=False):
+                typed = typer.prompt(
+                    f"Type '{t.tool_id}' to confirm closing idle applications", default=""
+                )
+                if typed.strip().lower() in (t.tool_id.lower(), "close"):
                     confirmed_tools.append(t)
                 else:
                     console.print(f"[dim]Skipped {t.title}.[/dim]")
@@ -486,16 +519,37 @@ def fix_command(
                 console.print("No heavy background tasks currently eligible to be ended.")
                 confirmed_tools.append(t)
             else:
-                console.print("Top heavy tasks identified (largest 5):")
-                for hg in heavy_groups[:5]:
-                    console.print(
-                        f"  - {hg.name}: {hg.process_count} proc(s), {hg.cpu_percent:.1f}% CPU, "
-                        f"{hg.rss_bytes / (1024**2):.1f} MB RSS (PIDs: {list(hg.pids)})"
+                table_heavy = Table(title="Top Heavy Tasks", show_header=True)
+                table_heavy.add_column("#", justify="right")
+                table_heavy.add_column("Process Name", style="bold")
+                table_heavy.add_column("Processes", justify="right")
+                table_heavy.add_column("CPU %", justify="right")
+                table_heavy.add_column("RSS Memory", justify="right")
+                for i, hg in enumerate(heavy_groups[:5], 1):
+                    table_heavy.add_row(
+                        str(i),
+                        hg.name,
+                        str(hg.process_count),
+                        f"{hg.cpu_percent:.1f}%",
+                        f"{hg.rss_bytes / (1024**2):.1f} MB",
                     )
-                if typer.confirm("End these heavy background tasks?", default=False):
-                    confirmed_tools.append(t)
-                else:
+                console.print(table_heavy)
+                console.print("Enter numbers of tasks to end (e.g. '1,3'), or 'Q' to skip:")
+                picks = typer.prompt("Select tasks", default="Q").strip()
+                if picks.upper() in ("Q", "QUIT", ""):
                     console.print(f"[dim]Skipped {t.title}.[/dim]")
+                else:
+                    selected_names = []
+                    for p in picks.replace(" ", ",").split(","):
+                        if p.isdigit():
+                            idx = int(p) - 1
+                            if 0 <= idx < len(heavy_groups[:5]):
+                                selected_names.append(heavy_groups[idx].name)
+                    if selected_names:
+                        t.details["task_names"] = selected_names
+                        confirmed_tools.append(t)
+                    else:
+                        console.print(f"[dim]Skipped {t.title}.[/dim]")
 
     if not confirmed_tools:
         console.print("[yellow]No confirmed tools to execute.[/yellow]")
@@ -543,6 +597,7 @@ def fix_command(
                 adapter=adapter,
                 dry_run=dry_run,
                 force=force,
+                task_names=t.details.get("task_names"),
                 all_processes=t.details.get("all_procs", []),
                 confirm_force_cb=_confirm_force if force else None,
             )
@@ -577,9 +632,11 @@ def fix_command(
         table_ver.add_column("Delta", justify="right")
 
         def _fmt_delta(val: float, is_better_when_higher: bool, unit: str = "") -> str:
-            sign = "+" if val >= 0 else ""
+            if abs(val) < 1e-4:
+                return f"0.0{unit}"
+            sign = "+" if val > 0 else ""
             txt = f"{sign}{val}{unit}"
-            if plain or val == 0:
+            if plain:
                 return txt
             is_good = (val > 0) if is_better_when_higher else (val < 0)
             col = "spring_green2" if is_good else "red1"
@@ -613,7 +670,7 @@ def fix_command(
         mem_after_gb = after["available_memory_bytes"] / (1024**3)
         m_diff = round(mem_after_gb - mem_before_gb, 2)
         table_ver.add_row(
-            "Available Memory",
+            "Available memory change (measured)",
             f"{mem_before_gb:.2f} GB",
             f"{mem_after_gb:.2f} GB",
             _fmt_delta(m_diff, is_better_when_higher=True, unit=" GB"),
@@ -629,17 +686,33 @@ def fix_command(
             _fmt_delta(t_diff, is_better_when_higher=False, unit=" MB"),
         )
 
-        measured_freed = sum(r.bytes_freed for r in results if r.success)
-        freed_mb = measured_freed / (1024**2)
-        freed_delta = (
-            f"+{freed_mb:.1f} MB" if plain else f"[spring_green2]+{freed_mb:.1f} MB[/spring_green2]"
+        closed_app_bytes = sum(
+            r.bytes_freed
+            for r in results
+            if r.action in ("close_idle_apps", "end_heavy_tasks") and r.success
         )
-        table_ver.add_row(
-            "Measured Freed Bytes",
-            "-",
-            f"{freed_mb:.1f} MB",
-            freed_delta,
+        if closed_app_bytes > 0:
+            c_mb = closed_app_bytes / (1024**2)
+            table_ver.add_row(
+                "Memory used by closed apps (at close)",
+                f"{c_mb:.1f} MB",
+                "-",
+                f"-{c_mb:.1f} MB",
+            )
+
+        deleted_file_bytes = sum(
+            r.bytes_freed
+            for r in results
+            if r.action in ("clean_temp", "clean_app_caches", "empty_recycle_bin") and r.success
         )
+        if deleted_file_bytes > 0:
+            f_mb = deleted_file_bytes / (1024**2)
+            table_ver.add_row(
+                "Bytes deleted (files)",
+                "-",
+                "-",
+                f"+{f_mb:.1f} MB deleted",
+            )
 
         console.print(table_ver)
     elif dry_run:

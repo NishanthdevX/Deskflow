@@ -1,114 +1,119 @@
-# Deskflow Installation and Packaging Guide
+# Deskflow Installation and Verification Guide
 
-This document details the one-line installer mechanisms, downloaded payload sizes, security guarantees, baseline storage, and uninstallation instructions.
+Deskflow requires no administrator or root privileges and installs in an isolated user-level environment.
 
 ---
 
-## 1. Quick Start Installers
+## 1. Quick One-Liner Installation
 
-### Windows PowerShell (No Administrator Rights Required)
+### Windows (PowerShell 5.1+ or PowerShell 7+)
+Run from Windows Terminal or PowerShell:
 ```powershell
 irm https://raw.githubusercontent.com/NishanthdevX/Deskflow/main/install.ps1 | iex
 ```
 
-### macOS Terminal (No Sudo Required)
+### macOS (Terminal)
+Run from Terminal:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/NishanthdevX/Deskflow/main/install.sh | bash
 ```
 
-> **Note on macOS**: The macOS installer is verified in continuous integration (CI) on `macos-latest` runners.
+Both installers automatically:
+1. Check for `uv` (fast Python package runner) and download it to your user directory if missing.
+2. Download the Deskflow distribution wheel and official release `SHA256SUMS`.
+3. Verify the SHA-256 cryptographic hash of the wheel before running.
+4. Launch Deskflow directly using an isolated Python 3.12 virtual environment.
 
 ---
 
-## 2. How the Installer Works and No-Admin Guarantee
+## 2. Checksum Verification
 
-The installation scripts (`install.ps1` and `install.sh`) are designed to be short, transparent, and completely non-destructive:
+### Automatic Verification
+The installer script downloads `SHA256SUMS` alongside the wheel. If the computed SHA-256 checksum does not match the published release hash, the installation immediately aborts:
+```text
+Error: SHA-256 checksum mismatch for deskflow-0.1.0-py3-none-any.whl!
+Expected: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+Found:    a5892c17...
+Aborting installation.
+```
 
-1. **No Administrator Rights**: The scripts run entirely in the user space and never request or require elevation (UAC / `sudo`).
-2. **Session-Isolated PATH**: If the `uv` tool runner is not already installed on the machine, the installer invokes Astral's official user-space installer with `UV_NO_MODIFY_PATH=1` and appends `uv` to the current session `$env:PATH` only. It never edits system environment variables, Windows Registry, or shell RC profiles.
-3. **Isolated Python Runtime**: Downloads an isolated, standalone Python 3.12 managed runtime inside the user's `~/.local/share/uv` or `%LOCALAPPDATA%\uv`.
-4. **Execution via `uvx`**: Executes Deskflow inside an ephemeral environment directly from the packaged wheel:
+### Manual Verification
+To manually inspect and verify release integrity:
+1. Download the release wheel and `SHA256SUMS` from the GitHub Release.
+2. Verify with PowerShell:
+   ```powershell
+   Get-FileHash -Path .\deskflow-0.1.0-py3-none-any.whl -Algorithm SHA256
+   Get-Content .\SHA256SUMS
+   ```
+3. Or on macOS / Linux:
    ```bash
-   uvx --python 3.12 --from <wheel-url> deskflow
+   shasum -a 256 -c SHA256SUMS
    ```
 
 ---
 
-## 3. Measured Payload and Environment Sizes
+## 3. Persistent Tool Installation
 
-Measurements conducted on version 0.1.0:
+To install `deskflow` permanently into your user command path (so you can run `deskflow` directly from any terminal window):
 
-| Component | Measured Size | Notes |
-| :--- | :--- | :--- |
-| **Deskflow Wheel (`.whl`)** | ~1.23 MB | Includes source package and default pre-bundled models under 10 MB limit. |
-| **Source Archive (`.tar.gz`)** | ~1.24 MB | Full source distribution. |
-| **Dependencies & Runtime** | ~180 MB | Ephemeral virtual environment cached by `uv` (numpy, scikit-learn, xgboost, typer, rich). |
-| **`xgboost` distribution** | ~55.5 MB | Standard CPU wheel (verified compatible on Windows and macOS; smaller than GPU variants). |
-
-### Launch Latency Benchmark
-- **First Launch (empty cache):** ~15 to 25 seconds (downloads Python 3.12 and dependencies via `uv`).
-- **Subsequent Launches (cached):** < 1.2 seconds to reach the interactive home menu.
-
----
-
-## 4. Environment Variables and Offline Modes
-
-The installers support the following configuration flags:
-
-- `DESKFLOW_ARGS`: Space-separated arguments passed to `deskflow` (e.g. `DESKFLOW_ARGS="doctor"` or `DESKFLOW_ARGS="scan"`).
-- `DESKFLOW_WHEEL`: Path to a local wheel file for air-gapped or CI offline testing:
-  ```powershell
-  $env:DESKFLOW_WHEEL = "dist\deskflow-0.1.0-py3-none-any.whl"
-  powershell -File install.ps1
-  ```
-- `DESKFLOW_INSTALL=1`: Performs a persistent user tool installation via `uv tool install` rather than transient execution:
-  ```powershell
-  $env:DESKFLOW_INSTALL = "1"
-  irm https://raw.githubusercontent.com/NishanthdevX/Deskflow/main/install.ps1 | iex
-  ```
-- `DESKFLOW_DRYRUN=1`: Prints every execution step without downloading or executing anything:
-  ```powershell
-  $env:DESKFLOW_DRYRUN = "1"
-  powershell -File install.ps1
-  ```
-
----
-
-## 5. Storage Locations
-
-Deskflow stores all user data and configuration strictly inside standard user-scoped directories:
-- **Windows:**
-  - Data: `%LOCALAPPDATA%\deskflow\deskflow`
-  - Config: `%LOCALAPPDATA%\deskflow\deskflow`
-- **macOS:**
-  - Data: `~/Library/Application Support/deskflow`
-  - Config: `~/Library/Application Support/deskflow`
-
----
-
-## 6. Troubleshooting
-
-- **Antivirus or Firewall Flagging:** Some corporate endpoint protection systems restrict `irm ... | iex` execution. The safe fallback is to download `install.ps1`, open and inspect the contents in an editor, and execute `powershell -File install.ps1`.
-- **Terminal Display:** On Windows, use Windows Terminal for full UTF-8 box-drawing and color support. If running in legacy `conhost`, pass `--plain` to force ASCII layout.
-- **TLS Errors:** Ensure TLS 1.2+ is enabled on Windows PowerShell (`[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12`).
-
----
-
-## 7. Uninstallation
-
-Because Deskflow requires no installer registration or registry keys, removal is clean and instant:
-
-```bash
-# If installed via DESKFLOW_INSTALL=1:
-uv tool uninstall deskflow
-
-# Clean uv runtime cache:
-uv cache clean
-
-# Remove local configuration and telemetry logs:
-# Windows (PowerShell):
-Remove-Item -Recurse -Force "$env:LOCALAPPDATA\deskflow"
-# macOS:
-rm -rf ~/Library/Application\ Support/deskflow
+```powershell
+# Windows
+$env:DESKFLOW_INSTALL = "1"
+irm https://raw.githubusercontent.com/NishanthdevX/Deskflow/main/install.ps1 | iex
 ```
 
+```bash
+# macOS
+export DESKFLOW_INSTALL=1
+curl -fsSL https://raw.githubusercontent.com/NishanthdevX/Deskflow/main/install.sh | bash
+```
+
+---
+
+## 4. Uninstallation and Data Removal
+
+### Remove Executable
+If installed via `uv tool`:
+```bash
+uv tool uninstall deskflow
+```
+
+### Remove All Local Data
+To permanently purge all local hardware baselines, telemetry traces, and fix audit logs:
+```bash
+deskflow uninstall --data
+```
+Deskflow will request typed confirmation (`delete my data`) before removing the local data directory.
+
+---
+
+## 5. Troubleshooting & Best Practices
+
+### Windows Terminal Recommendation
+For the optimal terminal experience, run Deskflow inside modern **Windows Terminal** rather than legacy Windows Console (`conhost.exe`). Windows Terminal includes native support for:
+- 24-bit ANSI color and smooth gradients
+- Unicode box drawings, block shading, and braille metric sparklines
+- Smooth font rendering with Cascadia Code or modern monospace fonts
+
+If running inside legacy Command Prompt or non-UTF-8 consoles, pass `--plain` for ASCII-safe fallback rendering:
+```bash
+deskflow --plain
+```
+
+### Execution Policy Restrictions (Windows)
+If PowerShell blocks script execution:
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+### Offline / Air-Gapped Installation
+To install from a pre-downloaded wheel:
+```bash
+# Windows
+$env:DESKFLOW_WHEEL = "C:\path\to\deskflow-0.1.0-py3-none-any.whl"
+powershell -File install.ps1
+
+# macOS
+export DESKFLOW_WHEEL="/path/to/deskflow-0.1.0-py3-none-any.whl"
+bash install.sh
+```

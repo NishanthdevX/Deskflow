@@ -1,13 +1,16 @@
 """Command-line entry point for deskflow."""
 
+import logging
 import platform
 import shutil
 import sys
 from collections.abc import Callable
+from typing import Any
 
 import psutil
 
 from deskflow import __version__
+from deskflow.logging_config import get_log_file_path, setup_logging
 
 if any(arg in ("--version", "-V") for arg in sys.argv[1:]):
     print(f"deskflow {__version__}")
@@ -28,9 +31,38 @@ from deskflow.commands.models import models_app
 from deskflow.commands.prep import app as prep_app
 from deskflow.commands.report import app as report_app
 from deskflow.commands.snapshot import app as snapshot_app
+from deskflow.commands.support import (
+    app_bugreport,
+    app_data,
+    app_privacy,
+    app_uninstall,
+)
 from deskflow.commands.watch import app as watch_app
 
-app = typer.Typer(
+
+class DeskflowTyper(typer.Typer):
+    """Custom Typer subclass providing top-level uncaught exception handling."""
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return super().__call__(*args, **kwargs)
+        except SystemExit:
+            raise
+        except Exception as exc:
+            if "--debug" in sys.argv:
+                raise
+            logger = logging.getLogger("deskflow")
+            logger.exception("Uncaught exception in CLI: %s", exc)
+            log_path = get_log_file_path()
+            sys.stderr.write(
+                f"\nError: {exc}\n"
+                f"Detailed diagnostic logs written to: {log_path}\n"
+                "Run 'deskflow bugreport' to generate a sanitized diagnostic report.\n"
+            )
+            sys.exit(1)
+
+
+app = DeskflowTyper(
     name="deskflow",
     help=(
         "Device-care tool: samples system telemetry, measures performance, "
@@ -53,6 +85,10 @@ app.add_typer(prep_app, name="prep")
 app.add_typer(info_app, name="info")
 app.add_typer(check_app, name="check")
 app.add_typer(fix_app, name="fix")
+app.add_typer(app_bugreport, name="bugreport")
+app.add_typer(app_privacy, name="privacy")
+app.add_typer(app_data, name="data")
+app.add_typer(app_uninstall, name="uninstall")
 
 
 def show_home_menu(input_fn: Callable[[str], str] = input) -> None:
@@ -290,11 +326,28 @@ def main(
         is_eager=True,
         help="Print version and exit.",
     ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Enable verbose diagnostic logging.",
+    ),
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help="Enable full stack traces on uncaught exceptions.",
+    ),
+    no_input: bool = typer.Option(
+        False,
+        "--no-input",
+        help="Disable interactive user prompts across commands.",
+    ),
 ) -> None:
     """deskflow: command-line device-care and performance prediction."""
     from deskflow.ui.theme import configure_stdout
 
     configure_stdout()
+    setup_logging(verbose=verbose, debug=debug)
     if len(sys.argv) != 1 or not sys.stdin.isatty():
         return
     show_home_menu()

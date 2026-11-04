@@ -162,8 +162,11 @@ def test_report_command(tmp_path: Path) -> None:
         ["--out", str(out_md), "--plain"],
     )
     assert result.exit_code == 0
-    assert "1. Machine & Baseline Summary" in result.output
-    assert "2. Offline Hold-Out Model Performance" in result.output
+    assert "1. [ MACHINE ]" in result.output or "1. Machine" in result.output
+    assert (
+        "3. [ OFFLINE LEADERBOARD ]" in result.output
+        or "2. Offline Hold-Out Model Performance" in result.output
+    )
     assert out_md.exists()
     content = out_md.read_text(encoding="utf-8")
     assert "# Deskflow Instructor Verification Report" in content

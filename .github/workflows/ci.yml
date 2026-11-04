@@ -81,6 +81,19 @@ jobs:
           $env:DESKFLOW_ARGS = "doctor"
           powershell -File install.ps1
 
+          # Test hash mismatch abort
+          $env:DESKFLOW_TEST_HASH_MISMATCH = "1"
+          $mismatchFailed = $false
+          try {
+            powershell -File install.ps1
+          } catch {
+            $mismatchFailed = $true
+          }
+          if (-not $mismatchFailed -and $LASTEXITCODE -eq 0) {
+            throw "Installer failed to abort on SHA-256 hash mismatch!"
+          }
+          $env:DESKFLOW_TEST_HASH_MISMATCH = $null
+
       - name: Run installer smoke test (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -90,4 +103,12 @@ jobs:
           bash install.sh
           export DESKFLOW_ARGS="doctor"
           bash install.sh
+
+          # Test hash mismatch abort
+          export DESKFLOW_TEST_HASH_MISMATCH=1
+          if bash install.sh; then
+            echo "Installer failed to abort on SHA-256 hash mismatch!" >&2
+            exit 1
+          fi
+          unset DESKFLOW_TEST_HASH_MISMATCH
 

@@ -1,0 +1,16 @@
+DESKFLOW v0.1.0
+Device health scan with ML slowdown prediction
+
++------------------------------ [THIS MACHINE] -------------------------------+
+| OS: Windows 11  |  CPU: 16 cores  |  RAM: 15.2 GB  |  Power: Battery (75%)  |
+| |  Baseline: Calibrated (3d ago)                                            |
++-----------------------------------------------------------------------------+
+[1] Full check   scan, fixes and report in one run
+[2] Quick scan   14 s health score and prediction
+[3] Fix Center   clean cache, free memory, close heavy tasks
+[4] Live watch   predictions versus reality, model comparison
+[5] System info  CPU, GPU, memory, disks
+[6] Report       graphs and model comparison
+[7] Prepare demo readiness checklist
+[Q] Quit
+

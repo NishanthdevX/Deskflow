@@ -257,6 +257,13 @@ def train_command(
         X_train=X_train,
     )
 
+    try:
+        from deskflow.ml.report_data import build_report_data
+
+        build_report_data(model_dir)
+    except Exception as exc:
+        logger.warning("Could not pre-build report_data.json: %s", exc)
+
     # 10. Display Leaderboards
     # Regression Leaderboard
     table_reg = Table(title="Regression Leaderboard (Target: target_total_ratio)")

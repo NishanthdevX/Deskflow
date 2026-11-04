@@ -7,6 +7,9 @@ All telemetry, model files, and prediction logs are stored under the user's own 
 directory in platform-standard locations (via `platformdirs`). No data is transmitted to
 any external service.
 
+When generating a bug report with `deskflow bugreport`, all personal user paths, usernames,
+and machine GUIDs are automatically redacted locally before saving the report file.
+
 ## Privilege model
 
 Deskflow runs as the current user without elevation. A small number of metrics require

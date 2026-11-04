@@ -24,13 +24,20 @@ from deskflow.ui.widgets import score_bar
 app = typer.Typer(help="Fast hardware and operating system summary.")
 console = Console()
 
-LOGO = """
+FULL_LOGO = """
+ ___  ____ ____ _  _ ____ _    ____ _ _ _ 
+|   \\| ___/ ___| |/ /| ___| |   /  \\ | | |
+| |) | _| \\___ \\ ' / | _|_| |__| () || | |
+|___/|____|____|_|\\_\\|_|  |_____\\__/  \\_/ 
+""".strip("\n")
+
+COMPACT_LOGO = """
   ____  _____ ____  _  __
  |  _ \\| ____/ ___|| |/ /
  | | | |  _| \\___ \\| ' / 
  | |_| | |___ ___) | . \\ 
  |____/|_____|____/|_|\\_\\
-"""
+""".strip("\n")
 
 
 def _get_cached_static_hardware(adapter: Any) -> dict[str, Any]:
@@ -72,12 +79,17 @@ def _get_cached_static_hardware(adapter: Any) -> dict[str, Any]:
     return static_info
 
 
-@app.callback(invoke_without_command=True)
-def info_command(
-    json_output: bool = typer.Option(False, "--json", help="Output specifications as JSON."),
-    plain: bool = typer.Option(False, "--plain", help="Pure ASCII output."),
+def render_info_dashboard(
+    json_output: bool = False,
+    plain: bool = False,
+    console_out: Console | None = None,
 ) -> None:
     """Print high-density system specifications and resource usage."""
+    from deskflow.ui.theme import configure_utf8_stdout, use_plain_output
+
+    configure_utf8_stdout()
+    plain = use_plain_output(plain)
+    active_console = console_out or Console(no_color=plain)
     adapter = get_adapter()
     static_hw = _get_cached_static_hardware(adapter)
 
@@ -166,9 +178,11 @@ def info_command(
                 f_gb = du.free / (1024**3)
                 pct = int(du.percent)
                 fstype = p.fstype or "unknown"
+                is_warn = (100 - pct) < 15 or f_gb < 20.0
+                warn_tag = " [WARN]" if is_warn else ""
                 disk_lines.append(
                     f"{p.mountpoint} [{fstype}] {u_gb:.0f}/{t_gb:.0f} GB "
-                    f"({f_gb:.0f} GB free, {pct}%) {score_bar(pct, 6, plain)}"
+                    f"({f_gb:.0f} GB free, {pct}%){warn_tag} {score_bar(pct, 8, plain)}"
                 )
                 disks_info.append(
                     {
@@ -190,7 +204,7 @@ def info_command(
         u_gb = (s_du.total - s_du.free) / (1024**3)
         t_gb = s_du.total / (1024**3)
         pct = int((u_gb / max(1.0, t_gb)) * 100)
-        disk_lines.append(f". {u_gb:.0f}/{t_gb:.0f} GB ({pct}%) {score_bar(pct, 6, plain)}")
+        disk_lines.append(f". {u_gb:.0f}/{t_gb:.0f} GB ({pct}%) {score_bar(pct, 8, plain)}")
         disks_info.append(
             {
                 "mount": ".",
@@ -242,7 +256,7 @@ def info_command(
             "display_resolution": res_str,
             "deskflow_version": f"v{__version__}",
         }
-        console.print_json(json.dumps(full_info))
+        active_console.print_json(json.dumps(full_info))
         return
 
     # Layout: side-by-side fastfetch panel
@@ -250,11 +264,18 @@ def info_command(
     grid.add_column("Logo", justify="left")
     grid.add_column("Details", justify="left")
 
-    logo_text = Text(LOGO.strip("\n"), style="bright_cyan bold" if not plain else "none")
+    w = active_console.width or 100
+    chosen_logo = FULL_LOGO if w >= 100 else COMPACT_LOGO
+    logo_text = Text(chosen_logo, style="bright_cyan bold" if not plain else "none")
 
-    details_table = Table(box=box.ASCII if plain else box.SIMPLE, show_header=False, pad_edge=False)
-    details_table.add_column("Key", style="bold cyan" if not plain else "none")
-    details_table.add_column("Val")
+    details_table = Table(
+        box=box.ASCII if plain else box.SIMPLE,
+        show_header=False,
+        pad_edge=False,
+        expand=True,
+    )
+    details_table.add_column("Key", style="bold cyan" if not plain else "none", no_wrap=True)
+    details_table.add_column("Val", overflow="fold")
 
     details_table.add_row("Host", host_model)
     details_table.add_row("OS", os_str)
@@ -278,4 +299,13 @@ def info_command(
         box=box.ASCII if plain else box.ROUNDED,
         border_style="cyan" if not plain else "none",
     )
-    console.print(panel)
+    active_console.print(panel)
+
+
+@app.callback(invoke_without_command=True)
+def info_command(
+    json_output: bool = typer.Option(False, "--json", help="Output specifications as JSON."),
+    plain: bool = typer.Option(False, "--plain", help="Pure ASCII output."),
+) -> None:
+    """Print high-density system specifications and resource usage."""
+    render_info_dashboard(json_output=json_output, plain=plain)

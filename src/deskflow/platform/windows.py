@@ -620,13 +620,21 @@ def _get_static_hardware_win32() -> dict[str, Any]:
     except Exception:
         pass
 
-    # Resolution via GetSystemMetrics
+    # Resolution: physical display resolution via GetDeviceCaps with GetSystemMetrics fallback
     try:
         user32 = ctypes.windll.user32
-        w = int(user32.GetSystemMetrics(0))
-        h = int(user32.GetSystemMetrics(1))
+        gdi32 = ctypes.windll.gdi32
+        hdc = user32.GetDC(0)
+        w = gdi32.GetDeviceCaps(hdc, 118)  # DESKTOPHORZRES (physical width)
+        h = gdi32.GetDeviceCaps(hdc, 117)  # DESKTOPVERTRES (physical height)
+        user32.ReleaseDC(0, hdc)
         if w > 0 and h > 0:
             info["resolution"] = f"{w}x{h}"
+        else:
+            w = int(user32.GetSystemMetrics(0))
+            h = int(user32.GetSystemMetrics(1))
+            if w > 0 and h > 0:
+                info["resolution"] = f"{w}x{h}"
     except Exception:
         pass
 

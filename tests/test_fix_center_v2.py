@@ -255,3 +255,30 @@ def test_yes_never_selects_caution():
     for t in chosen:
         assert t.risk == "SAFE"
         assert t.tool_id in ("clean_temp", "clean_app_caches", "trim_memory")
+
+
+def test_caution_policy_requires_explicit_confirmation():
+    """Verify --yes and --include-caution alone skips CAUTION tools.
+
+    Explicit --confirm-caution must be given to execute CAUTION tools.
+    """
+    res = runner.invoke(app, ["fix", "--yes", "--include-caution", "--tool", "empty_recycle_bin"])
+    assert res.exit_code == 0
+    assert "Skipped CAUTION tool 'empty_recycle_bin' under --yes" in res.output
+    assert "No confirmed tools to execute" in res.output
+
+    res_confirmed = runner.invoke(
+        app,
+        [
+            "fix",
+            "--dry-run",
+            "--yes",
+            "--include-caution",
+            "--confirm-caution",
+            "empty_recycle_bin",
+            "--tool",
+            "empty_recycle_bin",
+        ],
+    )
+    assert res_confirmed.exit_code == 0
+    assert "Recycle Bin" in res_confirmed.output

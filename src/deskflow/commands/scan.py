@@ -423,6 +423,37 @@ def scan_command(
     else:
         apps_status = "Poor"
 
+    # 5. Disk Space Category
+    low_disk_vols: list[str] = []
+    min_disk_free_pct = 100.0
+    try:
+        import psutil
+
+        for part in psutil.disk_partitions(all=False):
+            try:
+                du = psutil.disk_usage(part.mountpoint)
+                pct_free = (du.free / du.total * 100.0) if du.total > 0 else 100.0
+                gb_free = du.free / (1024**3)
+                min_disk_free_pct = min(min_disk_free_pct, pct_free)
+                if pct_free < 15.0 or gb_free < 20.0:
+                    low_disk_vols.append(
+                        f"{part.mountpoint} ({gb_free:.0f} GB free, {100.0 - pct_free:.0f}% full)"
+                    )
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    if not low_disk_vols:
+        disk_status = "Good"
+        disk_desc = "Adequate headroom (>15% free)"
+    elif min_disk_free_pct < 10.0:
+        disk_status = "Poor"
+        disk_desc = f"Critical low space: {', '.join(low_disk_vols)}"
+    else:
+        disk_status = "Fair"
+        disk_desc = f"Low space warning: {', '.join(low_disk_vols)}"
+
     # 6. JSON Output Mode
     if output_json:
         result_payload = {
@@ -453,6 +484,12 @@ def scan_command(
                     "status": mem_status,
                     "available_gb": round(headroom_gb, 2),
                     "available_percent": round(mem_avail_pct, 1),
+                    "is_ml": False,
+                },
+                "disk_space": {
+                    "status": disk_status,
+                    "low_disk_volumes": low_disk_vols,
+                    "min_free_percent": round(min_disk_free_pct, 1),
                     "is_ml": False,
                 },
                 "storage": {
@@ -516,6 +553,7 @@ def scan_command(
     category_rows = [
         ("Performance", perf_status, f"{score}/100, ML prediction", float(score)),
         ("Memory", mem_status, f"{headroom_gb:.1f} GB free", mem_avail_pct),
+        ("Disk space", disk_status, disk_desc, min_disk_free_pct),
         ("Storage", storage_status, f"{cleanable_mb:.1f} MB cleanable", 0.0),
         ("Background apps", apps_status, f"{idle_count} group(s), {idle_rss_gb:.1f} GB", 0.0),
     ]

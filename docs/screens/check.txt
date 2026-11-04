@@ -1,0 +1,307 @@
+
+=== STEP 1/5: SYSTEM INFO ===
++-------------------------- [DESKFLOW SYSTEM INFO] ---------------------------+
+|   ____  _____ ____  _  __  +----------------------------------------------+ |
+|  |  _ \| ____/ ___|| |/ /  |Host    | ASUSTeK COMPUTER INC. ROG Zephyrus  | |
+|  | | | |  _| \___ \| ' /   |        | G15 GA503RM_GA503RMZ                | |
+|  | |_| | |___ ___) | . \   |OS      | Windows 11 (AMD64) 26H2 (Build      | |
+|  |____/|_____|____/|_|\_\  |        | 26300)                              | |
+|                            |CPU     | AMD Ryzen 7 6800HS with Radeon      | |
+|                            |        | Graphics (8C/16T @ 3201 MHz)        | |
+|                            |GPU     | AMD Radeon(TM) Graphics (0.5 GB     | |
+|                            |        | VRAM)                               | |
+|                            |        | NVIDIA GeForce RTX 3060 Laptop GPU  | |
+|                            |        | (6.0 GB VRAM)                       | |
+|                            |Memory  | 9.7 / 15.2 GB (5.6 GB free, 63%)    | |
+|                            |        | #####---                            | |
+|                            |Swap    | 14.9 GB (44%) ###-----              | |
+|                            |Disk    | C:\ [NTFS] 323/351 GB (28 GB free,  | |
+|                            |        | 91%) [WARN] #######-                | |
+|                            |        | D:\ [NTFS] 193/301 GB (108 GB free, | |
+|                            |        | 64%) #####---                       | |
+|                            |        | E:\ [NTFS] 64/101 GB (37 GB free,   | |
+|                            |        | 63%) #####---                       | |
+|                            |Display | 1920x1080                           | |
+|                            |Power   | Battery 75% (Discharging)           | |
+|                            |Uptime  | 4h 32m                              | |
+|                            |Version | v0.1.0                              | |
+|                            +----------------------------------------------+ |
++-----------------------------------------------------------------------------+
+
+=== STEP 2/5: HEALTH SCAN ===
+Measuring system telemetry and probes... ---------------------------    0:00:02
+Warning: Out-of-range telemetry detected (features exceed training 
+distribution).
++----------------------- [SCAN SUMMARY: DESKFLOW SCAN] -----------------------+
+| OS: Windows 11POWER: batteryMODEL: RandomForest BASELINE: 3d agoSCAN: 16.4s |
+|                             DEMO                                            |
++-----------------------------------------------------------------------------+
++-------------------------- [HEALTH AND PREDICTION] --------------------------+
+| +-----------------++-----------------++-----------------++----------------+ |
+| | [HEALTH]        || [NEXT 20 S]     || [LIKELY CAUSE]  || [UNUSUAL]      | |
+| | 95/100  Good    || 1.11x  vs       || healthy  50%    || Yes  0.64      | |
+| | 100 = Baseline  || baseline        || conf            || score          | |
+| | | Good          || Horizon 20s |   || Telemetry tag | || IsolationFore… | |
+| | performance     || 111% baseline   || 50% confidence  || | Thresh 0.54  | |
+| | #############-  || ratio           || #######-------  || ############## | |
+| | 95%             || #####---------  || 50%             || 100%           | |
+| +-----------------+| 37%             |+-----------------++----------------+ |
+|                    +-----------------+                                      |
++-----------------------------------------------------------------------------+
++-----------------------------------------------------------------------------+
+| +------- [ WHY: TOP FACTORS ] -------++---------- [ RESOURCES ] ----------+ |
+| | +--------------------------------+ || +-------------------------------+ | |
+| | | elevated OS context    | ##### | || | CPU     | #--------- | _____" | | |
+| | | switching (+0.05)      |       | || |         | 9%         |        | | |
+| | | high memory pressure   | ##### | || | Memory  | ########-- | ______ | | |
+| | | (+0.02)                |       | || |         | 64%        |        | | |
+| | | elevated system thread | ##### | || | Disk    | ---------- | ______ | | |
+| | | count (+0.02)          |       | || | Busy    | 0%         |        | | |
+| | +--------------------------------+ || | Swap    | #####----- | ____-" | | |
+| +------------------------------------+| |         | 44%        |        | | |
+|                                       | +-------------------------------+ | |
+|                                       +-----------------------------------+ |
++-----------------------------------------------------------------------------+
++------------------------------- [CATEGORIES] --------------------------------+
+| +-------------------------------------------------------------------------+ |
+| | Category        | Status | Details                                      | |
+| |-----------------+--------+----------------------------------------------| |
+| | Performance     | Good   | 95/100, ML prediction ########               | |
+| | Memory          | Good   | 5.6 GB free ###-----                         | |
+| | Disk space      | Poor   | Critical low space: C:\ (28 GB free, 92%     | |
+| |                 |        | full) #-------                               | |
+| | Storage         | Good   | 0.0 MB cleanable                             | |
+| | Background apps | Good   | 0 group(s), 0.0 GB                           | |
+| +-------------------------------------------------------------------------+ |
++-----------------------------------------------------------------------------+
++------------------------------ [ HEAVY TASKS ] ------------------------------+
+| +-------------------------------------------------------------------------+ |
+| | Task                                       |     Metric |        Detail | |
+| |--------------------------------------------+------------+---------------| |
+| | Antigravity IDE.exe (14 proc)              | 128.7% CPU | 2010.0 MB RAM | |
+| | language_server_windows_x64.exe (1 proc)   |   1.3% CPU |  115.5 MB RAM | |
+| | chrome.exe (12 proc)                       |   0.6% CPU | 1058.6 MB RAM | |
+| | FvContainer.exe (1 proc)                   |   0.6% CPU |   22.0 MB RAM | |
+| | Microsoft.CmdPal.Ext.PowerToys.exe (1      |   0.0% CPU |   51.5 MB RAM | |
+| | proc)                                      |            |               | |
+| | msedgewebview2.exe (6 proc)                |   0.0% CPU |  359.1 MB RAM | |
+| +-------------------------------------------------------------------------+ |
++-----------------------------------------------------------------------------+
++-------------------- [ ACTIONS: No action recommended ] ---------------------+
+| +-------------------------------------------------------------------------+ |
+| |     |               |            | Measured      |                      | |
+| |   # | Tool          |    Risk    | Potential     | Scope / Action       | |
+| |-----+---------------+------------+---------------+----------------------| |
+| |   1 | Clean         |   [SAFE]   | 5.3 MB        | Deletes files older  | |
+| |     | temporary     |            | cleanable     | than 24h in temp     | |
+| |     | files         |            |               | roots                | |
+| |   2 | Clean browser |   [SAFE]   | 2.1 MB (10    | Clears browser       | |
+| |     | & app caches  |            | files)        | caches (pages load   | |
+| |     |               |            |               | slower once)         | |
+| |   3 | Empty Recycle | [CAUTION]  | 0.0 MB (0     | Empties Recycle Bin  | |
+| |     | Bin / Trash   |            | items)        | permanently          | |
+| |     |               |            |               | (irreversible)       | |
+| |   4 | Trim process  |   [SAFE]   | 43 processes  | Reclaims memory      | |
+| |     | working sets  |            | using 5368.5  | working sets (effect | |
+| |     |               |            | MB            | is temporary)        | |
+| |     |               |            | (reclaimable  |                      | |
+| |     |               |            | amount        |                      | |
+| |     |               |            | unknown)      |                      | |
+| |   5 | Close idle    | [CAUTION]  | 0.0 MB across | Gracefully closes    | |
+| |     | windowed apps |            | 0 app         | idle background      | |
+| |     |               |            | group(s)      | windowed             | |
+| |     |               |            |               | applications         | |
+| |   6 | End heavy     | [CAUTION]  | 9 heavy tasks | Terminates top       | |
+| |     | background    |            | using 4240.0  | non-protected heavy  | |
+| |     | tasks         |            | MB            | background processes | |
+| |     |               |            | (reclaimable  |                      | |
+| |     |               |            | amount        |                      | |
+| |     |               |            | unknown)      |                      | |
+| +-------------------------------------------------------------------------+ |
++-- Timings: measure 14.96s | storage 0.00s | infer 0.3008s | total 16.41s ---+
+Scan completed in 16.4s.
+
+=== STEP 3/5: FIX CENTER INVENTORY ===
+                    [DESKFLOW FIX CENTER - TOOLS INVENTORY]                    
++-----------------------------------------------------------------------------+
+| # | Tool               |   Risk    | Measured Potential | What it changes   |
+|---+--------------------+-----------+--------------------+-------------------|
+| 1 | Clean temporary    |  [SAFE]   |   5.3 MB cleanable | Deletes files     |
+|   | files              |           |                    | older than 24h in |
+|   |                    |           |                    | temp roots        |
+| 2 | Clean browser &    |  [SAFE]   |  2.1 MB (10 files) | Clears browser    |
+|   | app caches         |           |                    | caches (pages     |
+|   |                    |           |                    | load slower once) |
+| 3 | Empty Recycle Bin  | [CAUTION] |   0.0 MB (0 items) | Empties Recycle   |
+|   | / Trash            |           |                    | Bin permanently   |
+|   |                    |           |                    | (irreversible)    |
+| 4 | Trim process       |  [SAFE]   | 43 processes using | Reclaims memory   |
+|   | working sets       |           |          5368.5 MB | working sets      |
+|   |                    |           |       (reclaimable | (effect is        |
+|   |                    |           |    amount unknown) | temporary)        |
+| 5 | Close idle         | [CAUTION] |    0.0 MB across 0 | Gracefully closes |
+|   | windowed apps      |           |       app group(s) | idle background   |
+|   |                    |           |                    | windowed          |
+|   |                    |           |                    | applications      |
+| 6 | End heavy          | [CAUTION] |      9 heavy tasks | Terminates top    |
+|   | background tasks   |           |    using 4249.4 MB | non-protected     |
+|   |                    |           |       (reclaimable | heavy background  |
+|   |                    |           |    amount unknown) | processes         |
++-----------------------------------------------------------------------------+
+
+=== STEP 4/5: LIVE ACCURACY WATCH ===
+Live accuracy watch skipped.
+
+=== STEP 5/5: SUMMARY REPORT ===
+HTML report exported to report.html
++-----------------------------------------------------------------------------+
+| DEMO MODEL (SYNTHETIC DATA - NOT A REAL WORLD RESULT)                       |
++-----------------------------------------------------------------------------+
+
+1. [ MACHINE ]
++-----------------------------------------------------------------------------+
+| Property  | Specification                                                   |
+|-----------+-----------------------------------------------------------------|
+| Host OS   | Windows 11 (AMD64)                                              |
+| Processor | AMD Ryzen 7 6800HS with Radeon Graphics (8 phys / 16 log cores) |
+| Memory    | 15.2 GB RAM                                                     |
+| GPU       | AMD Radeon(TM) Graphics                                         |
++-----------------------------------------------------------------------------+
+
+2. [ BASELINES ]
++-----------------------------------------------------------------------------+
+|             |                 |   Median Latency |     p95 Latency |        |
+| Power State | Calibrated UTC  |             (ms) |            (ms) | CV (%) |
+|-------------+-----------------+------------------+-----------------+--------|
+| AC          | 2026-11-04T15:… |            12.01 |           12.90 |  7.70% |
+| BATTERY     | 2026-11-01T16:… |            22.09 |           27.87 |  8.00% |
++-----------------------------------------------------------------------------+
+
+3. [ OFFLINE LEADERBOARD ]
++-----------------------------------------------------------------------------+
+| Model                   |   MAE |         95% CI | Distribution             |
+|-------------------------+-------+----------------+--------------------------|
+| XGBoost                 | 0.075 | [0.071, 0.079] | ######------------------ |
+| RandomForest            | 0.076 | [0.073, 0.080] | ######------------------ |
+| Ridge                   | 0.077 | [0.074, 0.081] | ######]----------------- |
+| RollingMean (baseline)  | 0.290 | [0.274, 0.306] | ###################[#]-- |
+| Persistence (baseline)  | 0.158 | [0.151, 0.164] | ##########[#------------ |
++-----------------------------------------------------------------------------+
++-----------------------------------------------------------------------------+
+|            |        |            |        |          |         |   Beats    |
+| Model      |    MAE |     95% CI |   RMSE | R2 Score | Tol Acc | Persisten… |
+|------------+--------+------------+--------+----------+---------+------------|
+| XGBoost    | 0.0750 |   [0.0714, | 0.0953 |   0.9841 |   99.1% |    YES     |
+|            |        |    0.0788] |        |          |         |            |
+| RandomFor… | 0.0761 |   [0.0726, | 0.0970 |   0.9835 |   99.0% |    YES     |
+|            |        |    0.0798] |        |          |         |            |
+| Ridge      | 0.0773 |   [0.0736, | 0.0976 |   0.9833 |   98.8% |    YES     |
+|            |        |    0.0812] |        |          |         |            |
+| RollingMe… | 0.2899 |   [0.2742, | 0.3919 |   0.7310 |   55.7% |     -      |
+|            |        |    0.3061] |        |          |         |            |
+| Persisten… | 0.1575 |   [0.1515, | 0.1873 |   0.9386 |   81.2% |     -      |
+|            |        |    0.1638] |        |          |         |            |
++-----------------------------------------------------------------------------+
+
+4. [ PREDICTED VS ACTUAL ]
+[PREDICTED VS ACTUAL]  [P] Predicted  [A] Actual  [*] Overlap                  
+                                                                               
+2.85 |            *                         * P  AAP                           
+2.58 |          **  A*P*                      A *PPA                           
+2.31 |             *P A *                      *    *                          
+2.04 |   A                                   *                                 
+1.77 | AAP A***                    **  *A *                                    
+1.50 | PP *P   *                     ** P* *                                   
+1.22 |                           A                                             
+0.95 |*                  ********P*                  *********                 
+     +--------------------------------------------------------                 
+      0s                                                Time (samples)         
+
+5. [ BREAKDOWNS ]
+                            Scenario MAE Breakdown                             
++-----------------------------------------------------------------------------+
+| Scenario            |   XGBoost |    RandomForest |    Ridge |  Persistence |
+|---------------------+-----------+-----------------+----------+--------------|
+| background_load     |    0.0735 |          0.0741 |   0.0722 |       0.1109 |
+| combo               |    0.0779 |          0.0789 |   0.0792 |       0.2140 |
+| cpu_pressure        |    0.0858 |          0.0855 |   0.0841 |       0.2103 |
+| disk_pressure       |    0.0803 |          0.0840 |   0.0789 |       0.1525 |
+| idle                |    0.0462 |          0.0469 |   0.0675 |       0.0656 |
+| memory_pressure     |    0.0860 |          0.0874 |   0.0819 |       0.1915 |
++-----------------------------------------------------------------------------+
+
+6. [ CONFUSION MATRIX ]
+                          [ROOT CAUSE CLASSIFICATION]                          
++-----------------------------------------------------------------------------+
+| Actual \    |         |            |             |            |             |
+| Pred        | healthy | cpu_press… | memory_pre… | disk_pres… | background… |
+|-------------+---------+------------+-------------+------------+-------------|
+| healthy     |  @ 166  |       0    |       0     |       0    |       0     |
+| cpu_pressu… |     0   |   @ 166    |       0     |       0    |       0     |
+| memory_pre… |     0   |       0    |    @ 166    |       0    |       0     |
+| disk_press… |     0   |       0    |       0     |   @ 166    |       0     |
+| background… |     0   |       0    |       0     |       0    |    @ 166    |
++-----------------------------------------------------------------------------+
+Overall Accuracy: 100.0% | Macro F1: 1.0000
+
+7. [ FEATURE IMPORTANCE ]
++-----------------------------------------------------------------------------+
+| Feature                             |    Weight | Contribution Bar          |
+|-------------------------------------+-----------+---------------------------|
+| probe_total_ratio                   |    0.9526 | ####################      |
+| top1_cpu_percent                    |    0.0163 | --------------------      |
+| busy_process_count                  |    0.0094 | --------------------      |
+| ctx_switches_per_s_mean_12s         |    0.0068 | --------------------      |
+| probe_total_ratio_mean_12s          |    0.0048 | --------------------      |
+| cpu_percent_mean_max_12s            |    0.0030 | --------------------      |
+| disk_read_mb_s_mean_12s             |    0.0005 | --------------------      |
+| probe_cpu_ratio                     |    0.0005 | --------------------      |
+| idle_app_rss_gb                     |    0.0005 | --------------------      |
+| cpu_percent_mean_slope_12s          |    0.0005 | --------------------      |
++-----------------------------------------------------------------------------+
+
+8. [ ANOMALY DETECTOR ]
++-----------------------------------------------------------------------------+
+| Metric                                                     |          Value |
+|------------------------------------------------------------+----------------|
+| ROC-AUC                                                    |         1.0000 |
+| Recall (anomalies)                                         |         1.0000 |
+| False Alarm Rate (healthy)                                 |         0.0181 |
+| Threshold                                                  |         0.5440 |
++-----------------------------------------------------------------------------+
+
+9. [ LIVE ACCURACY ]
++-----------------------------------------------------------------------------+
+| Model                      |      Aggregated Live MAE |     Evaluated Pairs |
+|----------------------------+--------------------------+---------------------|
+| XGBoost                    |                   0.2568 |                  31 |
+| RandomForest               |                   0.1669 |                  31 |
+| Ridge                      |                   0.2241 |                  31 |
+| Persistence Baseline       |                   0.2141 |                  31 |
++-----------------------------------------------------------------------------+
+[WARN] 3 watch session(s) excluded due to out-of-range MAE (>100.0).
+
+10. [ FIX EFFECTIVENESS ]
++-----------------------------------------------------------------------------+
+| Remediation Tool            |         Executed Runs |         Bytes Deleted |
+|-----------------------------+-----------------------+-----------------------|
+| unknown                     |                     2 |              534.1 MB |
++-----------------------------------------------------------------------------+
+
+11. [ LIMITATIONS ]
+- Evaluated on single hardware host (AMD Ryzen 7 6800HS with Radeon Graphics, 
+15.2 GB RAM).
+- Power states calibrated: AC, BATTERY
+- Trained entirely on synthetic simulation data; benchmark metrics do not 
+represent organic multi-user workloads.
+- Probe telemetry measures CPU, RAM, and storage latency; GPU workloads are 
+unmonitored.
+- Scenarios producing near-zero probe slowdown in simulation: idle, lightweight
+background.
+
+
+HTML verification report written to: 
+C:\Users\visha\Downloads\SYSOPS\deskflow\report.html
+
+Guided full check completed.
+

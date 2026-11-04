@@ -45,6 +45,9 @@ def configure_stdout() -> None:
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 
+configure_utf8_stdout = configure_stdout
+
+
 def use_plain_output(requested: bool = False) -> bool:
     """Return whether output must use portable ASCII-only formatting."""
     encoding = (getattr(sys.stdout, "encoding", None) or "").lower()

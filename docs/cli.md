@@ -175,3 +175,53 @@ Every execution of `deskflow fix` appends a record to `<user_data_dir>/fixlog.js
 }
 ```
 
+---
+
+## Standard Process Exit Codes
+
+Deskflow standardizes process exit codes across all commands:
+
+| Code | Identifier | Description |
+| :---: | :--- | :--- |
+| `0` | `EXIT_OK` | Command completed successfully with no critical errors. |
+| `1` | `EXIT_ERROR` | Runtime error, unexpected exception, or internal fault. |
+| `2` | `EXIT_USAGE` | Invalid CLI options, mutually exclusive arguments, or syntax error. |
+| `3` | `EXIT_UNSUPPORTED_PLATFORM` | Operating system or architecture unsupported (e.g. Linux). |
+| `4` | `EXIT_BASELINE_MISSING` | Required baseline for current power state has not been calibrated. |
+| `5` | `EXIT_BLOCKED_OR_DECLINED` | Action blocked by safety policy or declined by user. |
+
+---
+
+## Global Options
+
+- `--plain`: Emit monochrome ASCII-only output. Honored alongside the `NO_COLOR` environment variable.
+- `--no-input`: Never prompt for user interaction; exit immediately with code `5` or continue non-interactively where safe.
+- `--verbose`, `-v`: Enable verbose diagnostic logging to `<data_dir>/logs/deskflow.log`.
+- `--debug`: Print complete exception tracebacks directly to standard error.
+
+---
+
+## Additional Commands
+
+### `deskflow check`
+Guided 5-step health evaluation: Info -> Scan -> Fix Center -> Live Watch -> Summary Report with HTML export.
+
+### `deskflow report`
+Generates comprehensive verification report across terminal, Markdown, pure JSON (`--json`), and publication-ready HTML (`--html FILE`).
+
+### `deskflow info`
+High-density hardware and operating system specification dashboard.
+
+### `deskflow bugreport`
+Generates a sanitized local Markdown diagnostic report with usernames, home paths, and machine GUIDs redacted. Never uploads anything.
+
+### `deskflow privacy`
+Displays Deskflow offline privacy commitments and local data storage locations.
+
+### `deskflow data`
+Inspects local storage usage across baselines, telemetry, models, and audit logs.
+
+### `deskflow uninstall --data`
+Purges local Deskflow configuration, baselines, and logs after typed confirmation.
+
+

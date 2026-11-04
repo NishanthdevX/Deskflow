@@ -25,6 +25,8 @@ models/
 *.parquet
 *.manifest.json
 report*.md
+report*.html
+*.html
 *.csv.gz
 
 # Coverage
