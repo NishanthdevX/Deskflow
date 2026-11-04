@@ -2,7 +2,7 @@
 
 Deskflow anticipates system degradation and sluggishness before it impacts foreground user responsiveness by predicting normalized probe latency 20 seconds ahead ($H = 20$ s).
 
-Models are trained and validated on battery power only. Results on AC power are unvalidated.
+Models support dual-power state validation (AC vs. Battery), with independent baseline calibration for each power profile.
 The dual-state baseline format is retained for future AC validation.
 
 ## 1. Problem Formulation

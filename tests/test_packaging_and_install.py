@@ -78,4 +78,3 @@ def test_install_ps1_dryrun() -> None:
     assert proc.returncode == 0
     assert "[DRYRUN]" in proc.stdout
     assert "NishanthdevX/Deskflow" in proc.stdout
-

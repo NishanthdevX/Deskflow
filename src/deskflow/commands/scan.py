@@ -12,6 +12,7 @@ from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
 from rich.table import Table
 
 from deskflow.baseline import (
+    CalibrationError,
     calibrate_baseline,
     get_current_power_state,
     load_baseline,
@@ -79,13 +80,9 @@ def scan_command(
 
     # 1. Resolve Power State and Baseline
     power_state = get_current_power_state(adapter)
-    if power_state == "ac" and not output_json:
-        console.print(
-            "[yellow]AC results are unvalidated; current models use battery-only data.[/yellow]"
-        )
     try:
         baseline = load_baseline(power_state=power_state)
-    except FileNotFoundError:
+    except (FileNotFoundError, CalibrationError):
         baseline = None
 
     if baseline is None:

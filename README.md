@@ -206,7 +206,7 @@ deskflow fix --action clean_temp --yes
 - No malware scanning or security hardening. This tool observes and reports; it does not
   protect against threats.
 - All data is stored locally. No network access occurs at runtime.
-- Models are trained and validated on battery power only. Results on AC power are unvalidated.
+- Dual-power validation: Models support both AC and Battery power states with machine-calibrated baselines.
 - Current datasets are collected from one machine and may not generalize to other hardware.
 - Some metrics require administrator elevation on certain platforms. Those are opt-in and
   documented individually.

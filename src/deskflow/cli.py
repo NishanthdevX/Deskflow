@@ -18,7 +18,9 @@ from deskflow.commands.dataset import app as dataset_app
 from deskflow.commands.doctor import app as doctor_app
 from deskflow.commands.lab import app as lab_app
 from deskflow.commands.models import models_app
+from deskflow.commands.report import app as report_app
 from deskflow.commands.snapshot import app as snapshot_app
+from deskflow.commands.watch import app as watch_app
 
 app = typer.Typer(
     name="deskflow",
@@ -37,6 +39,8 @@ app.add_typer(baseline_app, name="baseline")
 app.add_typer(lab_app, name="lab")
 app.add_typer(dataset_app, name="dataset")
 app.add_typer(models_app, name="models")
+app.add_typer(watch_app, name="watch")
+app.add_typer(report_app, name="report")
 
 
 def show_home_menu(input_fn: Callable[[str], str] = input) -> None:
@@ -44,7 +48,10 @@ def show_home_menu(input_fn: Callable[[str], str] = input) -> None:
     console = Console()
     console.print("[bright_cyan bold]DESKFLOW[/bright_cyan bold]")
     console.print("[dim]Device health scan with ML slowdown prediction[/dim]")
-    console.print("1 Scan\n2 Fix (preview first)\n3 Doctor\n4 Baseline status\n5 Quit")
+    console.print(
+        "1 Scan\n2 Fix (preview first)\n3 Watch (Live Accuracy)\n"
+        "4 Doctor\n5 Baseline status\n6 Quit"
+    )
     choice = input_fn("Select: ").strip()
     if choice == "1":
         from deskflow.commands.scan import scan_command
@@ -55,10 +62,14 @@ def show_home_menu(input_fn: Callable[[str], str] = input) -> None:
 
         fix_command(dry_run=True)
     elif choice == "3":
+        from deskflow.commands.watch import watch_command
+
+        watch_command()
+    elif choice == "4":
         from deskflow.commands.doctor import doctor_command
 
         doctor_command()
-    elif choice == "4":
+    elif choice == "5":
         from deskflow.commands.baseline import show_command
 
         show_command()
