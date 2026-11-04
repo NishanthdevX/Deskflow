@@ -8,7 +8,9 @@ This is a code-derived status record for the current tree.
 - Feature windows are 6 and 12 seconds. `MIN_HISTORY_S` is 12 seconds and the prediction horizon is 20 seconds.
 - Live scan defaults to 14 seconds. Model artifacts are XGBoost UBJ files, RandomForest joblib files, Ridge JSON parameters, classifiers, Isolation Forest, model card, metrics, and test predictions when training extras are installed.
 - Runtime explanations use the existing XGBoost contribution path where available; non-XGBoost models do not claim native contribution explanations.
-- The CLI commands are train, evaluate, scan, fix, snapshot, collect, doctor, baseline, lab, dataset, and models.
+- The CLI commands are train, evaluate, scan, fix, snapshot, collect, doctor, baseline, lab, dataset, models, watch, and report.
+- Phase 7 packaging provides bundled default models in wheel data, zero-dependency one-line installers (install.ps1 and install.sh), and automated GitHub Actions release workflow.
+- Phase 8 dual-power AC restoration supports calibrated AC and Battery baselines, live accuracy verification (`deskflow watch`), and instructor summary generation (`deskflow report`).
 - Health score inputs are only predicted slowdown ratio. It is 100 at ratio <= 1, falls linearly to 0 at ratio >= 3, and is clipped to the documented range.
 
 Known historical discrepancies corrected by this phase: the prior implementation summary overstated completed work and referred to unsupported daemon/tray behavior. The canonical current status is this file.
