@@ -2,6 +2,7 @@
 
 import json
 import logging
+import shutil
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -214,10 +215,24 @@ def render_watch_layout(
     tbl_pending.add_column("Predicted Tag", overflow="fold")
     tbl_pending.add_column("Top Contributing Factor", overflow="fold")
 
-    for p in tracker.pending[-6:]:
+    term_lines = shutil.get_terminal_size(fallback=(100, 30)).lines
+    max_rows = 6
+    if term_lines < 26:
+        max_rows = 2
+    elif term_lines < 32:
+        max_rows = 4
+
+    def _local_time(iso_str: str) -> str:
+        try:
+            dt = datetime.fromisoformat(iso_str)
+            return dt.astimezone().strftime("%H:%M:%S")
+        except Exception:
+            return iso_str[11:19]
+
+    for p in tracker.pending[-max_rows:]:
         rem = max(0.0, p["t_due"] - current_mono)
         tbl_pending.add_row(
-            p["t_made_utc"][11:19],
+            _local_time(p["t_made_utc"]),
             f"{rem:4.1f}s left",
             f"{p['pred_xgb']:.2f}x",
             p["pred_tag"],
@@ -239,12 +254,12 @@ def render_watch_layout(
     tbl_resolved.add_column("Within Tol", justify="center", overflow="fold")
     tbl_resolved.add_column("Persistence Error", justify="right", overflow="fold")
 
-    for r in tracker.resolved[-6:]:
+    for r in tracker.resolved[-max_rows:]:
         tol_color = "green" if r["within_tol"] else "yellow"
         label = "YES" if r["within_tol"] else "NO"
         tol_text = f"[{tol_color}]{label}[/{tol_color}]"
         tbl_resolved.add_row(
-            r["time_utc"][11:19],
+            _local_time(r["time_utc"]),
             f"{r['pred_xgb']:.2f}x",
             f"{r['actual_ratio']:.2f}x",
             f"{r['abs_error']:.3f}",
@@ -270,10 +285,17 @@ def render_watch_layout(
         else:
             d_color = "green" if delta <= 0 else "red"
             delta_str = f"[{d_color}]{delta:+.4f}[/{d_color}]"
+
+        mae_val = row["mae"]
+        if mae_val > 100.0 or np.isnan(mae_val) or np.isinf(mae_val):
+            mae_str = "[red]invalid[/red]" if not plain else "invalid"
+        else:
+            mae_str = f"{mae_val:.4f}"
+
         tbl_board.add_row(
             row["model"],
             str(row["n"]),
-            f"{row['mae']:.4f}",
+            mae_str,
             f"{row['tol_pct']:.1f}%",
             delta_str,
         )
@@ -386,7 +408,8 @@ def watch_command(
                 plain=plain,
             ),
             console=console,
-            refresh_per_second=4,
+            refresh_per_second=2,
+            vertical_overflow="crop",
         ) as live:
             for entry in lines:
                 raw_sample = entry.get("sample", {})
@@ -420,28 +443,38 @@ def watch_command(
                     if len(records_buffer) >= 2 and history_s >= 12.0:
                         feat_dict = build_row(records_buffer, baseline=baseline)
                         X_row = np.array([[feat_dict[k] for k in FEATURE_NAMES]])
-                        pred_xgb = (
-                            float(runtime.xgb_reg.predict(X_row)[0])
-                            if runtime.xgb_reg
-                            else actual_ratio
-                        )
-                        pred_rf = (
-                            float(runtime.rf_reg.predict(X_row)[0])
-                            if runtime.rf_reg
-                            else actual_ratio
-                        )
-                        pred_ridge = actual_ratio
-                        if runtime.ridge_params:
-                            pred_ridge = float(
-                                np.dot(X_row[0], runtime.ridge_params["coef"])
-                                + runtime.ridge_params["intercept"]
-                            )
+                        pred_dict = runtime.predict(X_row)
+                        slow_preds = pred_dict["slowdown_ratio"]
 
-                        top_fac = "system metrics within normal range"
-                        for k in FEATURE_NAMES:
-                            if feat_dict[k] > 0.05 and k in FEATURE_MAP:
-                                top_fac = FEATURE_MAP[k].plain
-                                break
+                        pred_xgb = float(
+                            np.clip(slow_preds.get("XGBoost", actual_ratio), 0.3, 10.0)
+                        )
+                        pred_rf = float(
+                            np.clip(slow_preds.get("RandomForest", actual_ratio), 0.3, 10.0)
+                        )
+                        pred_ridge = float(
+                            np.clip(slow_preds.get("Ridge", actual_ratio), 0.3, 10.0)
+                        )
+                        persistence_ratio = float(np.clip(actual_ratio, 0.3, 10.0))
+
+                        out_flag = pred_dict.get("out_of_range", False)
+                        top_fac = (
+                            "out-of-range telemetry"
+                            if out_flag
+                            else "system metrics within normal range"
+                        )
+                        if not out_flag:
+                            for k in FEATURE_NAMES:
+                                if feat_dict[k] > 0.05 and k in FEATURE_MAP:
+                                    top_fac = FEATURE_MAP[k].plain
+                                    break
+
+                        pred_tag = "healthy"
+                        if (
+                            "predicted_issue" in pred_dict
+                            and "XGBoost" in pred_dict["predicted_issue"]
+                        ):
+                            pred_tag = pred_dict["predicted_issue"]["XGBoost"]
 
                         tracker.add_prediction(
                             t_mono=cur_mono,
@@ -449,8 +482,8 @@ def watch_command(
                             pred_xgb=pred_xgb,
                             pred_rf=pred_rf,
                             pred_ridge=pred_ridge,
-                            persistence_ratio=actual_ratio,
-                            pred_tag="healthy",
+                            persistence_ratio=persistence_ratio,
+                            pred_tag=pred_tag,
                             top_factor=top_fac,
                         )
 
@@ -486,6 +519,7 @@ def watch_command(
             ),
             console=console,
             refresh_per_second=2,
+            vertical_overflow="crop",
         ) as live:
             try:
                 while (time.monotonic() - start_mono) < duration:
@@ -534,22 +568,11 @@ def watch_command(
                         if len(records_buffer) >= 2 and history_s >= 12.0:
                             feat_dict = build_row(records_buffer, baseline=baseline)
                             X_row = np.array([[feat_dict[k] for k in FEATURE_NAMES]])
-                            pred_xgb = (
-                                float(runtime.xgb_reg.predict(X_row)[0])
-                                if runtime.xgb_reg
-                                else actual_ratio
-                            )
-                            pred_rf = (
-                                float(runtime.rf_reg.predict(X_row)[0])
-                                if runtime.rf_reg
-                                else actual_ratio
-                            )
-                            pred_ridge = actual_ratio
-                            if runtime.ridge_params:
-                                pred_ridge = float(
-                                    np.dot(X_row[0], runtime.ridge_params["coef"])
-                                    + runtime.ridge_params["intercept"]
-                                )
+                            runtime_preds = runtime.predict(X_row)
+                            slow_dict = runtime_preds.get("slowdown_ratio", {})
+                            pred_xgb = float(slow_dict.get("XGBoost", actual_ratio))
+                            pred_rf = float(slow_dict.get("RandomForest", actual_ratio))
+                            pred_ridge = float(slow_dict.get("Ridge", actual_ratio))
 
                             top_fac = "system metrics within normal range"
                             for k in FEATURE_NAMES:
@@ -596,11 +619,16 @@ def watch_command(
 
     for row in final_board:
         delta = row["delta_mae"]
-        delta_str = "-" if row["model"] == "Persistence Baseline" else f"{delta:+.4f}"
+        if row["mae"] > 100.0:
+            mae_str = "invalid"
+            delta_str = "invalid"
+        else:
+            mae_str = f"{row['mae']:.4f}"
+            delta_str = "-" if row["model"] == "Persistence Baseline" else f"{delta:+.4f}"
         table_fin.add_row(
             row["model"],
             str(row["n"]),
-            f"{row['mae']:.4f}",
+            mae_str,
             f"{row['tol_pct']:.1f}%",
             delta_str,
         )

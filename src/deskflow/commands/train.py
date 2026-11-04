@@ -175,6 +175,15 @@ def train_command(
             preds = model.predict(X_test)
         else:
             preds = np.ones(len(X_test))
+
+        # Validate test predictions
+        if np.isnan(preds).any() or np.isinf(preds).any() or np.any(preds > 20.0):
+            max_p = float(np.max(preds)) if len(preds) > 0 else 0.0
+            raise ValueError(
+                f"Training failed: {name} test predictions contain invalid values "
+                f"(NaN, Inf, or value > 20, max={max_p:.2f})"
+            )
+
         test_preds_reg[name] = preds
         reg_test_metrics[name] = compute_regression_metrics(y_test_reg, preds)
 
@@ -245,6 +254,7 @@ def train_command(
         model_id=out_id,
         horizon_s=DEFAULT_HORIZON_S,
         primary_models=primary_models,
+        X_train=X_train,
     )
 
     # 10. Display Leaderboards

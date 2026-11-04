@@ -35,6 +35,7 @@ TARGET_COLUMNS = [
 METADATA_COLUMNS = [
     "issue_now",
     "baseline_state",
+    "baseline_source",
     "run_id",
     "session_id",
     "machine_id",
@@ -143,6 +144,10 @@ def build_dataset(
     processed_run_ids: list[str] = []
     run_reports: list[RunBuildReport] = []
 
+    # First pass: load runs, check mid-run power consistency, and gather session idle probes
+    loaded_runs: list[tuple[Path, list[Any], dict[str, Any] | None]] = []
+    session_idle_probes: dict[tuple[str, str], list[Any]] = {}
+
     for jf in jsonl_files:
         try:
             records = load_run(jf)
@@ -153,6 +158,56 @@ def build_dataset(
         if not records:
             continue
 
+        meta_path = jf.with_suffix(".meta.json")
+        meta = None
+        if meta_path.exists():
+            try:
+                with open(meta_path, encoding="utf-8") as f:
+                    meta = json.load(f)
+            except Exception:
+                pass
+
+        loaded_runs.append((jf, records, meta))
+
+        # Check for idle/prephase probes to form per-session baselines
+        run_label = records[0].label
+        session_id = meta.get("session_id") if meta else f"session-{jf.parent.name}"
+        for r in records:
+            if r.probe is not None:
+                p_state = getattr(r.sample, "power_state", None) or (
+                    "ac" if r.sample.battery_plugged else "battery"
+                )
+                key = (session_id, p_state)
+                if run_label == "idle" or (meta and meta.get("scenario") == "idle"):
+                    session_idle_probes.setdefault(key, []).append(r.probe)
+
+    # Compute per-session baseline if at least 20 idle probes exist
+    import numpy as np
+
+    session_baselines: dict[tuple[str, str], Baseline] = {}
+    for key, p_list in session_idle_probes.items():
+        if len(p_list) >= 20:
+            sorted_probes = sorted(p_list, key=lambda p: p.total_ns)
+            half = sorted_probes[: max(1, len(sorted_probes) // 2)]
+            fastest_totals = [p.total_ns for p in half]
+            sess_base = Baseline(
+                machine_id=f"session-{key[0]}",
+                created_utc=datetime.now(UTC).isoformat(),
+                platform="unknown",
+                cpu_ns=float(np.median([p.cpu_ns for p in half])),
+                mem_ns=float(np.median([p.mem_ns for p in half])),
+                disk_ns=float(np.median([p.disk_ns for p in half])),
+                total_ns=float(np.median(fastest_totals)),
+                p10_total_ns=float(np.percentile([p.total_ns for p in p_list], 10)),
+                p90_total_ns=float(np.percentile([p.total_ns for p in p_list], 90)),
+                sample_count=len(p_list),
+                deskflow_version=__version__,
+                power_state=key[1],
+            )
+            session_baselines[key] = sess_base
+
+    # Second pass: feature extraction
+    for jf, records, meta in loaded_runs:
         run_id = records[0].run_id
         label = records[0].label
         duration_s = (
@@ -162,15 +217,7 @@ def build_dataset(
         )
         drop_stats: dict[str, int] = {}
 
-        meta_path = jf.with_suffix(".meta.json")
-        meta: dict[str, Any] | None = None
-        if meta_path.exists():
-            try:
-                with open(meta_path, encoding="utf-8") as f:
-                    meta = json.load(f)
-            except Exception:
-                pass
-
+        # 1. Drop if aborted
         if meta and meta.get("aborted"):
             drop_stats["aborted run"] = len(records)
             run_reports.append(
@@ -185,13 +232,58 @@ def build_dataset(
             logger.warning("Skipping aborted run %s (%s)", jf.name, meta.get("abort_reason"))
             continue
 
+        # 2. Drop if power state changed mid-run
+        p_states = {
+            getattr(r.sample, "power_state", None)
+            or ("ac" if r.sample.battery_plugged else "battery")
+            for r in records
+        }
+        if len(p_states) > 1:
+            drop_stats["power state changed mid-run"] = len(records)
+            run_reports.append(
+                RunBuildReport(
+                    run_id=run_id,
+                    label=label,
+                    duration_s=duration_s,
+                    rows_kept=0,
+                    rows_dropped=drop_stats,
+                )
+            )
+            logger.warning("Skipping run %s: power state changed mid-run (%s)", jf.name, p_states)
+            continue
+
+        # Resolve active baseline and baseline_source for this run
+        run_p_state = str(next(iter(p_states)))
+        session_id = (
+            str(meta["session_id"])
+            if (meta and meta.get("session_id"))
+            else f"session-{jf.parent.name}"
+        )
+        sess_key: tuple[str, str] = (session_id, run_p_state)
+
+        active_b: Baseline | dict[str, Baseline | None]
+        if sess_key in session_baselines:
+            active_b = session_baselines[sess_key]
+            b_source = "session_idle"
+        else:
+            active_b = baseline
+            b_source = "stored_profile"
+            if len(session_idle_probes.get(sess_key, [])) > 0:
+                logger.warning(
+                    "Session %s has fewer than 20 idle probes (%d); "
+                    "falling back to stored baseline",
+                    session_id,
+                    len(session_idle_probes.get(sess_key, [])),
+                )
+
         run_rows = extract_run_features(
             records=records,
-            baseline=baseline,
+            baseline=active_b,
             meta=meta,
             horizon_s=horizon_s,
             keep_transition=keep_transition,
             drop_stats=drop_stats,
+            baseline_source=b_source,
         )
 
         rows_kept = len(run_rows)
@@ -212,7 +304,13 @@ def build_dataset(
     if not all_rows:
         raise ValueError("No valid rows could be extracted from input runs.")
 
-    import pandas as pd
+    try:
+        import pandas as pd
+    except ImportError as exc:
+        raise ImportError(
+            "Optional research dependency 'pandas' is required to build datasets. "
+            "Install with: pip install 'deskflow[train]' or uv pip install -e '.[train]'"
+        ) from exc
 
     df = pd.DataFrame(all_rows)
 

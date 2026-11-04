@@ -48,6 +48,8 @@ def save_model_set(
     models_root: Path | None = None,
     horizon_s: float = DEFAULT_HORIZON_S,
     primary_models: dict[str, str] | None = None,
+    X_train: Any | None = None,
+    training_percentiles: dict[str, Any] | None = None,
 ) -> Path:
     """Serialize all runtime-ready models, cards, and predictions to user_data_dir."""
     root = models_root or (get_data_dir() / "models")
@@ -107,6 +109,20 @@ def save_model_set(
         df_test_predictions.to_parquet(pred_parquet_path, index=False, engine="pyarrow")
 
     # 8. Model Card
+    if X_train is not None and training_percentiles is None:
+        import numpy as np
+
+        p005 = np.percentile(X_train, 0.5, axis=0)
+        p995 = np.percentile(X_train, 99.5, axis=0)
+        span = p995 - p005
+        margin = 0.05 * np.maximum(span, 1e-5)
+        training_percentiles = {
+            "p005": [float(x) for x in p005],
+            "p995": [float(x) for x in p995],
+            "bounds_lower": [float(x) for x in (p005 - margin)],
+            "bounds_upper": [float(x) for x in (p995 + margin)],
+        }
+
     card = {
         "model_id": mid,
         "feature_order": FEATURE_NAMES,
@@ -128,6 +144,7 @@ def save_model_set(
         "cv_metrics": cv_metrics,
         "test_metrics": test_metrics,
         "synthetic": synthetic,
+        "training_percentiles": training_percentiles or {},
         "created_utc": datetime.now(UTC).isoformat(),
     }
 

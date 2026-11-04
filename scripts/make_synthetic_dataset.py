@@ -320,6 +320,7 @@ def generate_synthetic_dataset(
             # Metadata
             row["issue_now"] = issue
             row["baseline_state"] = run["power_state"]
+            row["baseline_source"] = "synthetic_profile"
             row["run_id"] = run["run_id"]
             row["session_id"] = f"session-{run['run_id']}"
             row["machine_id"] = run["machine_id"]

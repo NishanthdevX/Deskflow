@@ -21,9 +21,9 @@ console = Console()
 @app.command("calibrate")
 def calibrate_command(
     duration: float = typer.Option(
-        120.0,
+        90.0,
         "--duration",
-        help="Calibration duration in seconds (default: 120s).",
+        help="Calibration duration in seconds (default: 90s, minimum: 60s).",
     ),
     out: Path | None = typer.Option(
         None,
@@ -120,6 +120,10 @@ def show_command(
                 "Total Latency 90th Percentile", f"{base.p90_total_ns / 1_000_000:.2f} ms"
             )
             table.add_row("Coefficient of Variation", f"{base.cv:.3f}")
+            if base.spread_fastest_half > 0:
+                table.add_row("Spread (Fastest 50%)", f"{base.spread_fastest_half:.3f}")
+            if base.mean_cpu_percent > 0:
+                table.add_row("Mean CPU Utilisation", f"{base.mean_cpu_percent:.1f}%")
             table.add_row("Sample Count", str(base.sample_count))
             table.add_row("Deskflow Version", base.deskflow_version)
 

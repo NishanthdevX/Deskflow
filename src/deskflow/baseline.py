@@ -91,6 +91,10 @@ class Baseline:
     mem_stride: int = MEM_PROBE_STRIDE
     disk_bytes: int = DISK_PROBE_BYTES
     probe_warmup_ms: int = PROBE_WARMUP_MS
+    p50_total_ns: float = 0.0
+    spread_fastest_half: float = 0.0
+    probe_fingerprint: str = ""
+    mean_cpu_percent: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         """Convert baseline record to dictionary."""
@@ -119,7 +123,66 @@ class Baseline:
             mem_stride=int(data.get("mem_stride", MEM_PROBE_STRIDE)),
             disk_bytes=int(data.get("disk_bytes", DISK_PROBE_BYTES)),
             probe_warmup_ms=int(data.get("probe_warmup_ms", 0)),
+            p50_total_ns=float(data.get("p50_total_ns", data.get("total_ns", 0.0))),
+            spread_fastest_half=float(data.get("spread_fastest_half", data.get("cv", 0.0))),
+            probe_fingerprint=str(data.get("probe_fingerprint", get_probe_fingerprint())),
+            mean_cpu_percent=float(data.get("mean_cpu_percent", 0.0)),
         )
+
+
+def get_probe_fingerprint() -> str:
+    """Return canonical parameter fingerprint string for the probe workload."""
+    return (
+        f"r{PROBE_REPEATS}_c{CPU_PROBE_ITERATIONS}_m{MEM_PROBE_BYTES}_"
+        f"s{MEM_PROBE_STRIDE}_d{DISK_PROBE_BYTES}_w{PROBE_WARMUP_MS}"
+    )
+
+
+def get_baseline_age_days(baseline: Baseline) -> float:
+    """Return age of baseline in fractional days."""
+    try:
+        dt = datetime.fromisoformat(baseline.created_utc)
+        return max(0.0, (datetime.now(UTC) - dt).total_seconds() / 86400.0)
+    except Exception:
+        return 0.0
+
+
+def get_baseline_age_str(baseline: Baseline) -> str:
+    """Format baseline age as a human-readable string (e.g. 2h ago, 3d ago)."""
+    try:
+        dt = datetime.fromisoformat(baseline.created_utc)
+        delta_s = max(0.0, (datetime.now(UTC) - dt).total_seconds())
+        if delta_s < 3600:
+            return f"{int(delta_s // 60)}m ago"
+        elif delta_s < 86400:
+            return f"{int(delta_s // 3600)}h ago"
+        else:
+            days = int(delta_s // 86400)
+            return f"{days}d ago"
+    except Exception:
+        return "unknown"
+
+
+def check_baseline_drift(
+    baseline: Baseline,
+    probe_fn: Callable[[], ProbeResult] = run_probe,
+    num_probes: int = 3,
+) -> tuple[bool, float, float]:
+    """Compare initial probes with baseline. Returns (is_drifting, ratio, mean_cpu)."""
+    import psutil
+
+    psutil.cpu_percent(interval=None)
+    probes = []
+    cpu_readings = []
+    for _ in range(num_probes):
+        time.sleep(0.2)
+        probes.append(probe_fn())
+        cpu_readings.append(psutil.cpu_percent(interval=None))
+    median_ns = statistics.median([p.total_ns for p in probes])
+    mean_cpu = statistics.mean(cpu_readings) if cpu_readings else 0.0
+    ratio = (median_ns / baseline.total_ns) if baseline.total_ns > 0 else 1.0
+    is_drifting = bool(mean_cpu < 15.0 and (ratio < 0.75 or ratio > 1.3))
+    return is_drifting, ratio, mean_cpu
 
 
 def get_current_power_state(adapter: PlatformAdapter | None = None) -> str:
@@ -222,22 +285,35 @@ def load_baseline(
 
 
 def calibrate_baseline(
-    duration_s: float = 120.0,
+    duration_s: float = 90.0,
     interval_s: float = 2.0,
     warmup_samples: int = 3,
     probe_fn: Callable[[], ProbeResult] = run_probe,
     config_dir: Path | None = None,
     out_path: Path | None = None,
     progress_callback: Callable[[int, int, float], None] | None = None,
+    min_duration_s: float = 0.0,
 ) -> Baseline:
     """Run baseline calibration loop on idle system.
 
     Discards the first `warmup_samples` probes to avoid cache/warmup effects.
-    Computes medians and p10/p90 percentiles. Refuses to save if coefficient of
-    variation of total_ns exceeds 0.5.
+    Computes medians of the fastest 50 percent of probe totals for robust baseline
+    estimation. Refuses if mean CPU utilisation exceeds 15% or spread of fastest
+    half exceeds 0.25.
     """
+    if min_duration_s > 0.0 and duration_s < min_duration_s:
+        raise CalibrationError(
+            f"Calibration duration {duration_s:.0f}s is below minimum "
+            f"required {min_duration_s:.0f}s."
+        )
+
+    import psutil
+
+    psutil.cpu_percent(interval=None)
+
     total_planned = int(max(duration_s // interval_s, warmup_samples + 3))
     probes: list[ProbeResult] = []
+    cpu_samples: list[float] = []
 
     start_mono = time.monotonic()
     current_probe_idx = 0
@@ -250,6 +326,7 @@ def calibrate_baseline(
 
         probe = probe_fn()
         probes.append(probe)
+        cpu_samples.append(psutil.cpu_percent(interval=None))
         current_probe_idx += 1
 
         if progress_callback is not None:
@@ -257,15 +334,44 @@ def calibrate_baseline(
 
     # Discard warmup probes
     usable = probes[warmup_samples:]
+    usable_cpu = cpu_samples[warmup_samples:]
     if len(usable) < 2:
         raise CalibrationError(
             f"Insufficient usable samples ({len(usable)}) for baseline calibration."
         )
 
-    totals = [p.total_ns for p in usable]
-    mean_total = statistics.mean(totals)
-    std_total = statistics.stdev(totals) if len(totals) > 1 else 0.0
-    cv = std_total / mean_total if mean_total > 0 else 0.0
+    mean_cpu = statistics.mean(usable_cpu) if usable_cpu else 0.0
+    if mean_cpu > 15.0:
+        raise CalibrationError(
+            f"Mean CPU utilisation was {mean_cpu:.1f}%, exceeding 15% threshold. "
+            "System must be idle during calibration."
+        )
+
+    # Baseline statistic: median of the fastest 50 percent of probe totals
+    sorted_by_total = sorted(usable, key=lambda p: p.total_ns)
+    half_count = max(1, len(sorted_by_total) // 2)
+    fastest_half = sorted_by_total[:half_count]
+
+    fastest_totals = [p.total_ns for p in fastest_half]
+    all_totals = [p.total_ns for p in usable]
+
+    import numpy as np
+
+    stat_total = float(np.median(fastest_totals))
+    stat_cpu = float(np.median([p.cpu_ns for p in fastest_half]))
+    stat_mem = float(np.median([p.mem_ns for p in fastest_half]))
+    stat_disk = float(np.median([p.disk_ns for p in fastest_half]))
+
+    p10_half = float(np.percentile(fastest_totals, 10))
+    p90_half = float(np.percentile(fastest_totals, 90))
+    spread_fastest_half = (p90_half - p10_half) / stat_total if stat_total > 0 else 0.0
+
+    p10_total_all = float(np.percentile(all_totals, 10))
+    p50_total_all = float(np.median(all_totals))
+    p90_total_all = float(np.percentile(all_totals, 90))
+    std_total = statistics.stdev(all_totals) if len(all_totals) > 1 else 0.0
+    mean_total = statistics.mean(all_totals) if all_totals else 1.0
+    cv = std_total / mean_total
 
     if cv > 0.5:
         raise CalibrationError(
@@ -273,25 +379,26 @@ def calibrate_baseline(
             "Machine was not sufficiently idle during calibration."
         )
 
-    cpu_list = [p.cpu_ns for p in usable]
-    mem_list = [p.mem_ns for p in usable]
-    disk_list = [p.disk_ns for p in usable]
+    if spread_fastest_half > 0.25:
+        raise CalibrationError(
+            f"Spread of the fastest half ({spread_fastest_half:.3f}) exceeded 0.25 threshold. "
+            "Machine performance was not sufficiently stable."
+        )
 
     machine_id = get_or_create_machine_id(config_dir=config_dir)
     adapter = get_adapter()
     power_state = get_current_power_state(adapter)
-    import numpy as np
 
     baseline = Baseline(
         machine_id=machine_id,
         created_utc=datetime.now(UTC).isoformat(),
         platform=adapter.name,
-        cpu_ns=float(np.median(cpu_list)),
-        mem_ns=float(np.median(mem_list)),
-        disk_ns=float(np.median(disk_list)),
-        total_ns=float(np.median(totals)),
-        p10_total_ns=float(np.percentile(totals, 10)),
-        p90_total_ns=float(np.percentile(totals, 90)),
+        cpu_ns=stat_cpu,
+        mem_ns=stat_mem,
+        disk_ns=stat_disk,
+        total_ns=stat_total,
+        p10_total_ns=p10_total_all,
+        p90_total_ns=p90_total_all,
         sample_count=len(usable),
         deskflow_version=__version__,
         cv=float(cv),
@@ -302,6 +409,10 @@ def calibrate_baseline(
         mem_stride=MEM_PROBE_STRIDE,
         disk_bytes=DISK_PROBE_BYTES,
         probe_warmup_ms=PROBE_WARMUP_MS,
+        p50_total_ns=p50_total_all,
+        spread_fastest_half=float(spread_fastest_half),
+        probe_fingerprint=get_probe_fingerprint(),
+        mean_cpu_percent=float(mean_cpu),
     )
 
     save_baseline(baseline, power_state=power_state, path=out_path, config_dir=config_dir)

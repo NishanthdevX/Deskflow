@@ -4,86 +4,94 @@ This guide outlines the standardized protocol for recording telemetry runs and c
 
 ---
 
-## Prerequisites
+## Operational Rules
 
-1. Ensure Python 3.12 is active and dependencies are synchronized:
-   ```bash
-   uv sync
-   ```
-2. Verify system health and available disk space:
-   ```bash
-   uv run deskflow doctor
-   ```
-   Confirm that at least 10 GiB of free disk space is available.
+Strictly adhere to the following environment rules during data collection:
+
+1. **Power Configuration**:
+   - For battery sessions, ensure battery capacity is above 60% before starting.
+   - Use the **Balanced** power plan or energy profile.
+   - Ensure Windows Battery Saver / Energy Saver is turned **OFF**.
+   - **Never change power state mid-run** (e.g., do not plug in or unplug the charger during an active run). Runs with mid-run power state transitions are detected and dropped by the dataset builder.
+2. **Machine Isolation**:
+   - Leave the machine completely alone and untouched during active lab injection sessions.
+   - Close all background synchronisation clients (OneDrive, Google Drive, Dropbox), browsers, and antivirus on-demand scanners.
 
 ---
 
-## Step 1: Baseline Calibration
+## Step 1: Baseline Calibration (v2)
 
-Before running injections or collections, calibrate your system's idle responsiveness baseline:
+Deskflow requires calibrated idle baselines for each power state (AC and Battery). Baselines use the median of the fastest 50% of probe totals to ensure robustness against transient background spikes.
 
-1. Close all user-facing applications (web browsers, IDEs, media players, background sync clients).
-2. Leave the computer completely untouched and idle.
-3. Run the calibration command:
+1. Close all user-facing applications.
+2. While plugged into AC power:
    ```bash
-   uv run deskflow baseline calibrate --duration 120
+   uv run deskflow baseline calibrate --duration 90
    ```
-4. Verify the baseline:
+3. Disconnect power (running on battery above 60%):
+   ```bash
+   uv run deskflow baseline calibrate --duration 90
+   ```
+4. Verify both baselines:
    ```bash
    uv run deskflow baseline show
    ```
-   If calibration fails due to high variance (coefficient of variation $> 0.5$), check for background indexing, cloud sync, or antivirus scans, let the machine settle, and re-run.
+   Calibration requires a minimum 60-second duration (default 90s), mean CPU utilisation under 15%, and a spread of the fastest 50% under 0.25.
 
 ---
 
-## Step 2: Smoke Test (Quick Plan)
+## Step 2: Fault-Injection Protocol
 
-Run the quick plan to verify injector operation and watchdog monitoring:
+Collect four distinct lab sessions across operational states and plan sizes:
 
+### Session A: Standard Plan on AC Power
+Connect to AC power:
+```bash
+uv run deskflow lab session --plan standard --yes
+```
+*Expected duration: ~2 hours (20 runs with 45s cooldowns).*
+
+### Session B: Standard Plan on Battery
+Ensure battery is > 60% and power cord is disconnected:
+```bash
+uv run deskflow lab session --plan standard --yes
+```
+*Expected duration: ~2 hours.*
+
+### Session C: Quick Plan on AC Power
+Connect to AC power:
 ```bash
 uv run deskflow lab session --plan quick --yes
 ```
+*Expected duration: ~25 minutes (5 runs).*
 
-This runs 5 short sequential injections (CPU pressure, memory pressure, disk pressure, background load, and idle reference) with a 45-second cooldown between runs.
+### Session D: Quick Plan on Battery
+Disconnect power (battery > 60%):
+```bash
+uv run deskflow lab session --plan quick --yes
+```
+*Expected duration: ~25 minutes.*
 
----
-
-## Step 3: Fault-Injection Sessions (Standard Plan)
-
-Run the complete 20-run standard plan twice across distinct machine operational states:
-
-1. **Session 1 (e.g. AC Power / Plugged In)**:
-   ```bash
-   uv run deskflow lab session --plan standard --yes
-   ```
-   *Expected duration: ~2 hours.*
-
-2. **Session 2 (e.g. Battery Power or Different Day)**:
-   ```bash
-   uv run deskflow lab session --plan standard --yes
-   ```
-   *Expected duration: ~2 hours.*
-
-*Note on Resumption*: If a session is interrupted (e.g. system sleep or manual abort), resume it without re-running finished injections:
+*Note on Resumption*: If a session is interrupted, resume it without re-running finished injections:
 ```bash
 uv run deskflow lab session --plan standard --resume <SESSION_ID> --yes
 ```
 
 ---
 
-## Step 4: Normal Field Telemetry Collection
+## Step 3: Normal Field Telemetry Collection
 
-Record three separate 1-hour sessions of genuine daily computer usage (coding, browsing, meetings, document editing):
+Record three separate 20-minute sessions of genuine daily computer usage (coding, browsing, meetings, document editing):
 
 ```bash
-uv run deskflow collect --label normal_use --duration 3600
+uv run deskflow collect --label normal_use --interval 2 --probe-interval 4 --duration 1200
 ```
 
-Execute this three times across different days or working sessions. The resulting records represent realistic foreground application mixes and natural multi-tasking patterns.
+Execute this three times across different working periods. These sessions provide realistic foreground application mixes, diverse scheduling states, and idle periods without artificial fault injection.
 
 ---
 
-## Step 5: Dataset Compilation and Validation
+## Step 4: Dataset Compilation and Validation
 
 Compile all recorded runs into an ML-ready parquet dataset:
 
@@ -92,6 +100,8 @@ Compile all recorded runs into an ML-ready parquet dataset:
    uv run deskflow dataset build --runs C:\Users\<USER>\AppData\Local\deskflow\deskflow\runs --out dataset.parquet
    ```
    *(On macOS, default path is `~/Library/Application Support/deskflow/runs`)*.
+
+   The dataset builder derives per-session idle baselines (`baseline_source = "session_idle"`) when at least 20 idle probes exist within a session, and automatically discards any runs where the power state changed mid-run.
 
 2. **Inspect Statistics and Label Distribution**:
    ```bash
@@ -104,4 +114,3 @@ Compile all recorded runs into an ML-ready parquet dataset:
    uv run deskflow dataset validate dataset.parquet
    ```
    Confirms zero duplicate timestamp keys, zero target NaNs, and complete feature coverage against the registry.
-

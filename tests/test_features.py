@@ -529,6 +529,7 @@ def test_merge_datasets_and_validation(tmp_path: Path) -> None:
     df1["ts_utc"] = ["2026-11-01T12:00:00Z", "2026-11-01T12:00:02Z"]
     df1["horizon_s"] = [30.0, 30.0]
     df1["baseline_total_ms"] = [25.0, 25.0]
+    df1["baseline_source"] = ["stored_profile", "stored_profile"]
     df1["split"] = ["train", "test"]
 
     p1 = tmp_path / "ds1.parquet"

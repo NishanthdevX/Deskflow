@@ -43,7 +43,7 @@ def status_style(status: str) -> str:
 
 
 def scan_dashboard(
-    machine_id: str,
+    baseline_age: str,
     power_state: str,
     model_name: str,
     synthetic: bool,
@@ -58,6 +58,8 @@ def scan_dashboard(
     recommendations: list[tuple[str, str, str | None]],
     elapsed_s: float,
     plain: bool = False,
+    anomaly_score: float = 0.0,
+    anomaly_threshold: float = 0.5,
 ) -> list[Panel]:
     """Build the structured scan view described in the terminal design document."""
     status = Table.grid(expand=True)
@@ -67,39 +69,50 @@ def scan_dashboard(
         f"STATUS: {health_label}",
         f"POWER: {power_state}",
         f"MODEL: {model_name}{' DEMO' if synthetic else ''}",
-        f"BASELINE: {machine_id[:8]}",
+        f"BASELINE: {baseline_age}",
         f"SCAN: {elapsed_s:.1f}s",
     )
     kpis = Table.grid(expand=True)
     for _ in range(4):
         kpis.add_column(ratio=1)
     health = f"[HEALTH]\n{score}/100 {health_label}\n{score_bar(score, 14, plain)} {score}%"
-    slowdown = f"[SLOWDOWN]\n{predicted_ratio:.2f}x in 20 s\nbaseline ratio\n"
-    slowdown += comparison_bar(predicted_ratio, 3, 14, plain)
+    slowdown = f"[SLOWDOWN]\n{predicted_ratio:.2f}x in 20 s\nbaseline ratio"
     issue = f"[ISSUE]\n{issue_tag}\nconfidence {confidence:.0%}\n"
-    issue += comparison_bar(confidence, 1, 14, plain)
-    anomaly_text = f"[ANOMALY]\n{'Detected' if anomaly else 'None'}\nmodel threshold\n"
-    anomaly_text += comparison_bar(1 if anomaly else 0, 1, 14, plain)
+    issue += comparison_bar(confidence, 1.0, 14, plain)
+    anom_max = max(0.01, anomaly_threshold)
+    anom_bar = comparison_bar(min(anom_max, anomaly_score), anom_max, 14, plain)
+    anomaly_text = f"[ANOMALY]\n{'Detected' if anomaly else 'None'}\nscore vs threshold\n{anom_bar}"
     kpis.add_row(health, slowdown, issue, anomaly_text)
+
     factors = Table(box=box.ASCII if plain else box.HORIZONTALS, show_header=False)
-    factors.add_column("Factor")
-    for reason in reasons:
-        factors.add_row(reason)
+    factors.add_column("Factor", ratio=3)
+    factors.add_column("Impact", ratio=1, justify="right")
+    for i, reason in enumerate(reasons):
+        frac = max(0.25, 1.0 - (i * 0.25))
+        factors.add_row(reason, comparison_bar(frac, 1.0, 10, plain))
+    if not reasons:
+        factors.add_row("All metrics within baseline range", comparison_bar(0.0, 1.0, 10, plain))
+
     category_table = Table(box=box.ASCII if plain else box.SQUARE)
     category_table.add_column("Category")
     category_table.add_column("Status")
     category_table.add_column("Details")
     for name, state, detail, value in categories:
-        details = detail + " " + comparison_bar(value, 100, 8, plain)
+        details = detail + (" " + comparison_bar(value, 100, 8, plain) if value > 0 else "")
         category_table.add_row(name, f"[{status_style(state)}]{state}[/]", details)
+
     fixes = Table(box=box.ASCII if plain else box.HORIZONTALS, show_header=False)
     fixes.add_column("Fix")
-    for title, evidence, warning in recommendations:
-        fixes.add_row(f"{title}: {evidence}" + (f" Warning: {warning}" if warning else ""))
+    if recommendations:
+        for title, evidence, warning in recommendations:
+            fixes.add_row(f"{title}: {evidence}" + (f" Warning: {warning}" if warning else ""))
+    else:
+        fixes.add_row("No action recommended: all system categories healthy")
+
     return [
         titled_panel("[SCAN SUMMARY: DESKFLOW SCAN]", status, plain),
         titled_panel("[HEALTH AND PREDICTION]", kpis, plain),
         titled_panel("[TOP FACTORS]", factors, plain),
         titled_panel("[CATEGORIES]", category_table, plain),
-        titled_panel("[RECOMMENDED FIXES]", fixes, plain),
+        titled_panel("[ACTIONS]", fixes, plain),
     ]

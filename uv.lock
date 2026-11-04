@@ -441,6 +441,9 @@ dependencies = [
 
 [package.optional-dependencies]
 train = [
+    { name = "matplotlib" },
+    { name = "pandas" },
+    { name = "pyarrow" },
     { name = "shap", version = "0.51.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "shap", version = "0.54.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
@@ -461,9 +464,12 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "joblib" },
+    { name = "matplotlib", marker = "extra == 'train'" },
     { name = "numpy" },
+    { name = "pandas", marker = "extra == 'train'" },
     { name = "platformdirs" },
     { name = "psutil" },
+    { name = "pyarrow", marker = "extra == 'train'" },
     { name = "rich" },
     { name = "scikit-learn" },
     { name = "shap", marker = "extra == 'train'" },

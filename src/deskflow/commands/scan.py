@@ -14,6 +14,9 @@ from rich.table import Table
 from deskflow.baseline import (
     CalibrationError,
     calibrate_baseline,
+    check_baseline_drift,
+    get_baseline_age_days,
+    get_baseline_age_str,
     get_current_power_state,
     load_baseline,
     save_baseline,
@@ -92,21 +95,45 @@ def scan_command(
             )
         if not yes:
             confirmed = typer.confirm(
-                f"Calibrate a 40-second baseline for {power_state} power now?",
+                f"Calibrate a baseline for {power_state} power now?",
                 default=True,
             )
             if not confirmed:
                 console.print("[red]Scan aborted: baseline required.[/red]")
                 raise typer.Exit(code=1)
         if not output_json:
-            console.print("[cyan]Running 40-second baseline calibration...[/cyan]")
+            console.print("[cyan]Running baseline calibration...[/cyan]")
         baseline = calibrate_baseline(
-            duration_s=40.0,
+            duration_s=60.0,
             interval_s=2.0,
         )
         save_baseline(baseline, power_state=power_state)
         if not output_json:
             console.print("[green]Baseline calibration complete and saved.[/green]")
+    elif not output_json:
+        # Age check
+        age_days = get_baseline_age_days(baseline)
+        if age_days > 7.0:
+            console.print(
+                f"[yellow]Warning: Baseline is {age_days:.1f} days old "
+                "(recommend recalibrating with 'deskflow baseline calibrate').[/yellow]"
+            )
+        # Drift check
+        if replay is None:
+            is_drifting, drift_ratio, mean_cpu = check_baseline_drift(baseline)
+            if is_drifting:
+                console.print(
+                    f"[yellow]Baseline may be out of date (drift ratio: {drift_ratio:.2f}x "
+                    f"at {mean_cpu:.1f}% CPU).[/yellow]"
+                )
+                if not yes and typer.confirm(
+                    f"Recalibrate baseline for {power_state} power now?",
+                    default=False,
+                ):
+                    console.print("[cyan]Running baseline recalibration...[/cyan]")
+                    baseline = calibrate_baseline(duration_s=60.0, interval_s=2.0)
+                    save_baseline(baseline, power_state=power_state)
+                    console.print("[green]Baseline recalibration complete and saved.[/green]")
 
     # 2. Acquire Telemetry Records
     records: list[Record] = []
@@ -275,6 +302,7 @@ def scan_command(
     anomaly_dict = preds.get("anomaly", {})
     is_anomaly = bool(anomaly_dict.get("is_anomaly", False))
     anomaly_score = float(anomaly_dict.get("score", 0.0))
+    is_out_of_range = bool(preds.get("out_of_range", False))
 
     # Top-3 TreeSHAP contributors with positive contributions above epsilon (1e-4)
     # Using plain language descriptions only
@@ -435,8 +463,12 @@ def scan_command(
 
     plain = use_plain_output(plain)
     dashboard_console = Console(no_color=plain)
-    dashboard_console.print("Deskflow Scan")
-    dashboard_console.print(f"Health Score: {score}/100 ({health_label})")
+    if is_out_of_range:
+        dashboard_console.print(
+            "[yellow]Warning: Out-of-range telemetry detected "
+            "(features exceed training distribution).[/yellow]"
+        )
+
     category_rows = [
         ("Performance", perf_status, f"{score}/100, ML prediction", float(score)),
         ("Memory", mem_status, f"{headroom_gb:.1f} GB free", mem_avail_pct),
@@ -444,8 +476,9 @@ def scan_command(
         ("Background apps", apps_status, f"{idle_count} group(s), {idle_rss_gb:.1f} GB", 0.0),
     ]
     recommendation_rows = [(r.title, r.evidence, r.warning) for r in recs]
+    baseline_age = get_baseline_age_str(baseline)
     for panel in scan_dashboard(
-        baseline.machine_id,
+        baseline_age,
         power_state,
         primary_reg,
         bool(card.get("synthetic")),
@@ -460,9 +493,10 @@ def scan_command(
         recommendation_rows,
         total_s,
         plain,
+        anomaly_score=anomaly_score,
+        anomaly_threshold=card.get("thresholds", {}).get("anomaly_threshold", 0.5),
     ):
         dashboard_console.print(panel)
-    dashboard_console.print("System Categories")
     dashboard_console.print(f"Scan completed in {total_s:.1f}s.")
     return
 

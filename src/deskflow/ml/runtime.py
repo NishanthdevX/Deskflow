@@ -139,27 +139,56 @@ class RuntimeModels:
         imputer_stats = self.ridge_params.get("imputer_statistics")
         scaler_mean = self.ridge_params.get("scaler_mean")
         scaler_scale = self.ridge_params.get("scaler_scale")
-        coef = np.asarray(self.ridge_params.get("coef", []))
+        coef = np.asarray(self.ridge_params.get("coef", []), dtype=np.float64)
         intercept = float(self.ridge_params.get("intercept", 1.0))
 
         X_work = np.copy(X)
         if imputer_stats:
-            stats_arr = np.asarray(imputer_stats)
+            stats_arr = np.asarray(imputer_stats, dtype=np.float64)
             inds = np.where(np.isnan(X_work))
             X_work[inds] = np.take(stats_arr, inds[1])
 
         if scaler_mean and scaler_scale:
-            X_work = (X_work - np.asarray(scaler_mean)) / np.asarray(scaler_scale)
+            sm = np.asarray(scaler_mean, dtype=np.float64)
+            ss = np.asarray(scaler_scale, dtype=np.float64)
+            safe_scale = np.where(ss < 1e-8, 1.0, ss)
+            X_work = (X_work - sm) / safe_scale
+            # Zero out any features where scale was near-zero
+            X_work = np.where(ss < 1e-8, 0.0, X_work)
+            # Clip standardized Ridge inputs to [-5, 5]
+            X_work = np.clip(X_work, -5.0, 5.0)
 
         raw_pred = np.dot(X_work, coef) + intercept
-        return np.asarray(raw_pred, dtype=np.float64)
+        # Clamp predicted ratios to [0.3, 10]
+        res: np.ndarray = np.asarray(np.clip(raw_pred, 0.3, 10.0), dtype=np.float64)
+        return res
 
     def predict(self, features: np.ndarray) -> dict[str, Any]:
         """Perform sub-50ms inference across all models for input feature array."""
         arr = np.asarray(features, dtype=np.float64)
-        is_single = arr.ndim == 1
-        if is_single:
+        if arr.ndim == 1:
             arr = arr.reshape(1, -1)
+            is_single = True
+        elif arr.ndim == 2 and arr.shape[0] == 1:
+            is_single = True
+        else:
+            is_single = False
+
+        # Training percentiles guard: clip inputs to [p005 - margin, p995 + margin]
+        t_pct = self.card.get("training_percentiles", {})
+        bounds_lower = t_pct.get("bounds_lower")
+        bounds_upper = t_pct.get("bounds_upper")
+        clipped_features_count = 0
+        out_of_range = False
+
+        if bounds_lower is not None and bounds_upper is not None:
+            bl = np.asarray(bounds_lower, dtype=np.float64)
+            bu = np.asarray(bounds_upper, dtype=np.float64)
+            if len(bl) == arr.shape[1] and len(bu) == arr.shape[1]:
+                is_clipped = (arr < bl) | (arr > bu)
+                clipped_features_count = int(np.sum(is_clipped))
+                out_of_range = bool(clipped_features_count > 3)
+                arr = np.clip(arr, bl, bu)
 
         # 1. Regression predictions
         slowdown: dict[str, Any] = {}
@@ -238,6 +267,13 @@ class RuntimeModels:
                     self.classes[int(np.argmax(row_p))] for row_p in lr_p
                 ]
 
+        # Clamp all predicted ratios to [0.3, 10]
+        for k, v in list(slowdown.items()):
+            if is_single:
+                slowdown[k] = float(np.clip(v, 0.3, 10.0))
+            else:
+                slowdown[k] = np.clip(v, 0.3, 10.0)
+
         # 3. Anomaly scoring
         anomaly_scores = self.iso_detector.score(arr)
         threshold = float(self.iso_detector.threshold)
@@ -248,12 +284,26 @@ class RuntimeModels:
                 "slowdown_ratio": slowdown,
                 "issue_probabilities": probs,
                 "predicted_issue": predicted_classes,
+                "out_of_range": out_of_range,
+                "clipped_count": clipped_features_count,
                 "anomaly": {
                     "score": round(score_val, 4),
                     "is_anomaly": bool(score_val >= threshold),
                     "threshold": round(threshold, 4),
                 },
             }
+        return {
+            "slowdown_ratio": slowdown,
+            "issue_probabilities": probs,
+            "predicted_issue": predicted_classes,
+            "out_of_range": out_of_range,
+            "clipped_count": clipped_features_count,
+            "anomaly": {
+                "score": [round(float(s), 4) for s in anomaly_scores],
+                "is_anomaly": [bool(s >= threshold) for s in anomaly_scores],
+                "threshold": round(threshold, 4),
+            },
+        }
 
         anomalies = anomaly_scores >= threshold
         return {

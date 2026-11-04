@@ -217,6 +217,13 @@ def train_regressors(
     def mae_score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
         return float(np.mean(np.abs(y_true - y_pred)))
 
+    # Identify near-constant features (fewer than 2 distinct values or variance < 1e-12)
+    near_const_mask = np.zeros(X_train.shape[1], dtype=bool)
+    for col_idx in range(X_train.shape[1]):
+        col_vals = X_train[:, col_idx]
+        if len(np.unique(col_vals)) < 2 or np.var(col_vals) < 1e-12:
+            near_const_mask[col_idx] = True
+
     # 2. Ridge Regression
     def make_ridge(alpha: float = 1.0) -> Pipeline:
         return Pipeline(
@@ -245,6 +252,16 @@ def train_regressors(
         )
         models["Ridge"] = m_ridge
         cv_metrics["Ridge"] = score
+
+    # Guard near-constant features in Ridge pipeline by zeroing out coefficients
+    if hasattr(m_ridge, "named_steps"):
+        r_scaler = m_ridge.named_steps["scaler"]
+        r_model = m_ridge.named_steps["ridge"]
+        for idx in range(len(near_const_mask)):
+            if near_const_mask[idx]:
+                r_model.coef_[idx] = 0.0
+                if r_scaler.scale_ is not None:
+                    r_scaler.scale_[idx] = 1.0
 
     # 3. Random Forest Regressor (at most 100 trees, max_depth at most 10)
     def make_rf(
@@ -370,6 +387,18 @@ def train_classifiers(
         )
         models["LogisticRegression"] = m_lr
         cv_metrics["LogisticRegression"] = score
+
+    # Guard near-constant features in LogisticRegression pipeline
+    if hasattr(m_lr, "named_steps"):
+        lr_scaler = m_lr.named_steps["scaler"]
+        lr_model = m_lr.named_steps["logreg"]
+        for col_idx in range(X_train.shape[1]):
+            col_vals = X_train[:, col_idx]
+            if len(np.unique(col_vals)) < 2 or np.var(col_vals) < 1e-12:
+                if lr_model.coef_.ndim == 2:
+                    lr_model.coef_[:, col_idx] = 0.0
+                if lr_scaler.scale_ is not None:
+                    lr_scaler.scale_[col_idx] = 1.0
 
     # 3. Random Forest Classifier (balanced, small)
     def make_rf(

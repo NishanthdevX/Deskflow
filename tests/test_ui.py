@@ -47,5 +47,5 @@ def test_plain_dashboard_is_ascii() -> None:
 
 def test_home_menu_quit_choice(monkeypatch) -> None:
     """The home menu accepts the non-destructive quit selection."""
-    responses = iter(["6"])
+    responses = iter(["Q"])
     show_home_menu(lambda _prompt: next(responses))

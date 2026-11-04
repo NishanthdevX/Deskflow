@@ -233,6 +233,7 @@ def extract_run_features(
     meta: dict[str, Any] | None = None,
     keep_transition: bool = False,
     drop_stats: dict[str, int] | None = None,
+    baseline_source: str = "stored_profile",
 ) -> list[dict[str, Any]]:
     """Extract features, targets, and metadata rows from a single run series.
 
@@ -389,6 +390,9 @@ def extract_run_features(
         # --- Metadata ---
         row["issue_now"] = issue
         row["baseline_state"] = row_state
+        row["baseline_source"] = (
+            meta.get("baseline_source", baseline_source) if meta else baseline_source
+        )
         row["run_id"] = cur_rec.run_id
         row["session_id"] = meta.get("session_id") if meta else f"day-{cur_rec.sample.ts_utc[:10]}"
         row["machine_id"] = (

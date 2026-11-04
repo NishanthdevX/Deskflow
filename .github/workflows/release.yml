@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -11,7 +12,7 @@ permissions:
 jobs:
   release:
     name: Build and Release
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,20 +26,22 @@ jobs:
         run: uv python install 3.12
 
       - name: Verify tag version matches code and scripts
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
         run: |
-          TAG="${GITHUB_REF#refs/tags/v}"
-          echo "Release tag version: $TAG"
-          PYPROJECT_VER=$(grep '^version = ' pyproject.toml | cut -d '"' -f 2)
-          echo "pyproject.toml version: $PYPROJECT_VER"
-          PS1_VER=$(grep '^\$Version = ' install.ps1 | cut -d "'" -f 2)
-          echo "install.ps1 version: $PS1_VER"
-          SH_VER=$(grep '^VERSION=' install.sh | cut -d '"' -f 2)
-          echo "install.sh version: $SH_VER"
+          $tag = "${{ github.ref_name }}".TrimStart("v")
+          Write-Host "Release tag version: $tag"
+          $pyproject = (Get-Content pyproject.toml | Select-String '^version = "(.*)"').Matches.Groups[1].Value
+          Write-Host "pyproject.toml version: $pyproject"
+          $ps1 = (Get-Content install.ps1 | Select-String '^\$Version = ''(.*)''').Matches.Groups[1].Value
+          Write-Host "install.ps1 version: $ps1"
+          $sh = (Get-Content install.sh | Select-String '^VERSION="(.*)"').Matches.Groups[1].Value
+          Write-Host "install.sh version: $sh"
 
-          if [ "$TAG" != "$PYPROJECT_VER" ] || [ "$TAG" != "$PS1_VER" ] || [ "$TAG" != "$SH_VER" ]; then
-            echo "Version mismatch: Tag ($TAG) vs pyproject ($PYPROJECT_VER) vs ps1 ($PS1_VER) vs sh ($SH_VER)"
+          if ($tag -ne $pyproject -or $tag -ne $ps1 -or $tag -ne $sh) {
+            Write-Error "Version mismatch: Tag ($tag) vs pyproject ($pyproject) vs ps1 ($ps1) vs sh ($sh)"
             exit 1
-          fi
+          }
 
       - name: Install dev dependencies
         run: uv sync --locked --python 3.12
@@ -53,9 +56,20 @@ jobs:
       - name: Build distributions
         run: uv build
 
+      - name: Generate SHA256SUMS
+        shell: pwsh
+        run: |
+          Get-FileHash -Algorithm SHA256 dist/* | ForEach-Object {
+            "$($_.Hash.ToLower())  $([System.IO.Path]::GetFileName($_.Path))"
+          } | Set-Content -Encoding ascii dist/SHA256SUMS.txt
+          Get-Content dist/SHA256SUMS.txt
+
       - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: |
+            dist/*
+          prerelease: true
           generate_release_notes: true
 

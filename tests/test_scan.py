@@ -165,9 +165,8 @@ def test_scan_replay_human_output(mock_scan_environment: Path) -> None:
     """Test deskflow scan --replay produces expected sections and output."""
     res = runner.invoke(app, ["scan", "--replay", str(mock_scan_environment), "--no-storage"])
     assert res.exit_code == 0, f"Command failed: {res.output}"
-    assert "Deskflow Scan" in res.output
-    assert "Health Score:" in res.output
-    assert "System Categories" in res.output
+    assert "DESKFLOW SCAN" in res.output
+    assert "HEALTH" in res.output
     assert "Performance" in res.output
     assert "Memory" in res.output
     assert "Background apps" in res.output

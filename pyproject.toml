@@ -23,6 +23,9 @@ dependencies = [
 [project.optional-dependencies]
 train = [
     "shap",
+    "pandas",
+    "pyarrow",
+    "matplotlib",
 ]
 
 [project.scripts]
