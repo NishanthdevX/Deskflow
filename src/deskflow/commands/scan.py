@@ -24,7 +24,7 @@ from deskflow.collector.storage import StorageScanner
 from deskflow.features.extract import build_row
 from deskflow.features.registry import DEFAULT_HORIZON_S, FEATURE_MAP
 from deskflow.health.score import compute_health_score
-from deskflow.ml.artifacts import get_latest_model_id, load_model_card
+from deskflow.ml.artifacts import load_model_card
 from deskflow.paths import get_data_dir
 from deskflow.platform.factory import get_adapter
 from deskflow.remediation.apps import find_idle_apps
@@ -216,15 +216,16 @@ def scan_command(
 
     # 4. Load Models and Predict (ML imports occur now after measuring)
     t_model_start = time.perf_counter()
+    from deskflow.ml.artifacts import resolve_model_dir
     from deskflow.ml.explain import top_contributors
     from deskflow.ml.runtime import RuntimeModels
 
-    latest_id = get_latest_model_id()
-    if latest_id is None:
+    try:
+        model_dir, _is_bundled = resolve_model_dir()
+    except FileNotFoundError as err:
         console.print("[red]Error: No trained model set found. Run 'deskflow train' first.[/red]")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from err
 
-    model_dir = get_data_dir() / "models" / latest_id
     card = load_model_card(model_dir)
     runtime = RuntimeModels.load(model_dir)
     model_load_s = time.perf_counter() - t_model_start

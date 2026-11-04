@@ -1,6 +1,7 @@
 """Models CLI command: list and inspect trained model sets."""
 
 import logging
+from pathlib import Path
 
 import typer
 from rich.console import Console
@@ -81,12 +82,19 @@ def show_model(
     target_id = model_id
     if target_id == "latest":
         latest = get_latest_model_id(root)
-        if not latest:
-            console.print("[red]Error: No 'latest' model set pointer exists.[/red]")
-            raise typer.Exit(code=1)
-        target_id = latest
+        if latest and (root / latest).exists():
+            model_dir = root / latest
+        else:
+            from deskflow.ml.artifacts import get_bundled_model_dir
 
-    model_dir = root / target_id
+            bundled = get_bundled_model_dir()
+            if bundled.exists() and (bundled / "model_card.json").exists():
+                model_dir = bundled
+            else:
+                console.print("[red]Error: No 'latest' model set pointer exists.[/red]")
+                raise typer.Exit(code=1)
+    else:
+        model_dir = root / target_id
     if not model_dir.exists():
         console.print(f"[red]Error: Model set '{target_id}' not found in {root}[/red]")
         raise typer.Exit(code=1)
@@ -158,3 +166,65 @@ def show_model(
         for k, v in anom_test.items():
             table_anom.add_row(k, f"{v}")
         console.print(table_anom)
+
+
+@models_app.command("export")
+def export_models(
+    to: Path = typer.Option(
+        ...,
+        "--to",
+        help="Destination directory path for exported model set.",
+    ),
+    model_id: str = typer.Option(
+        "latest",
+        "--model-id",
+        help="Model set ID to export, or 'latest'.",
+    ),
+    allow_synthetic: bool = typer.Option(
+        False,
+        "--allow-synthetic",
+        help="Allow exporting synthetic model sets.",
+    ),
+) -> None:
+    """Export a trained model set to a destination directory."""
+    import shutil
+
+    root = get_data_dir() / "models"
+    target_id = model_id
+    if target_id == "latest":
+        latest = get_latest_model_id(root)
+        if latest and (root / latest).exists():
+            model_dir = root / latest
+        else:
+            from deskflow.ml.artifacts import get_bundled_model_dir
+
+            bundled = get_bundled_model_dir()
+            if bundled.exists() and (bundled / "model_card.json").exists():
+                model_dir = bundled
+            else:
+                console.print("[red]Error: No 'latest' model set pointer exists.[/red]")
+                raise typer.Exit(code=1)
+    else:
+        model_dir = root / target_id
+    if not model_dir.exists():
+        console.print(f"[red]Error: Model set '{target_id}' not found in {root}[/red]")
+        raise typer.Exit(code=1)
+
+    card = load_model_card(model_dir)
+    is_synth = bool(card.get("synthetic", False))
+    if is_synth and not allow_synthetic:
+        console.print(
+            "[red]Error: Model set is synthetic. "
+            "Use --allow-synthetic to export synthetic models.[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    to.mkdir(parents=True, exist_ok=True)
+    count = 0
+    for item in model_dir.iterdir():
+        if item.is_file():
+            shutil.copy2(item, to / item.name)
+            count += 1
+
+    size_mb = compute_directory_size_bytes(to) / (1024 * 1024)
+    console.print(f"[green]Successfully exported {count} files ({size_mb:.2f} MB) to {to}[/green]")

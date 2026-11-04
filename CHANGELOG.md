@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0] - 2026-11-04
+
+### Added
+- Pre-bundled default ML models under `src/deskflow/data/models/default/` (size under 1.4 MB) supporting immediate out-of-the-box live scans.
+- `deskflow models export --to PATH [--allow-synthetic]` command to export serialized model packages.
+- Model resolution hierarchy: automatically resolves user-trained models first, falling back gracefully to bundled defaults.
+- Zero-dependency one-line user installers for Windows (`install.ps1`) and macOS (`install.sh`) running via `uvx` without administrator privileges or permanent environment changes.
+- GitHub Actions release automation (`.github/workflows/release.yml`) and installer smoke verification (`install-smoke` in `ci.yml`).
+- Installation and uninstallation documentation in `docs/INSTALL.md`.
+
 ## [Unreleased]
 
 ### Added

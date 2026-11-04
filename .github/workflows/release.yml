@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Verify tag version matches code and scripts
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          echo "Release tag version: $TAG"
+          PYPROJECT_VER=$(grep '^version = ' pyproject.toml | cut -d '"' -f 2)
+          echo "pyproject.toml version: $PYPROJECT_VER"
+          PS1_VER=$(grep '^\$Version = ' install.ps1 | cut -d "'" -f 2)
+          echo "install.ps1 version: $PS1_VER"
+          SH_VER=$(grep '^VERSION=' install.sh | cut -d '"' -f 2)
+          echo "install.sh version: $SH_VER"
+
+          if [ "$TAG" != "$PYPROJECT_VER" ] || [ "$TAG" != "$PS1_VER" ] || [ "$TAG" != "$SH_VER" ]; then
+            echo "Version mismatch: Tag ($TAG) vs pyproject ($PYPROJECT_VER) vs ps1 ($PS1_VER) vs sh ($SH_VER)"
+            exit 1
+          fi
+
+      - name: Install dev dependencies
+        run: uv sync --locked --python 3.12
+
+      - name: Run validation checks
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run mypy src
+          uv run pytest
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+

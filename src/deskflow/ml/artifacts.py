@@ -171,6 +171,37 @@ def get_latest_model_id(models_root: Path | None = None) -> str | None:
     return None
 
 
+def get_bundled_model_dir() -> Path:
+    """Return path to bundled default models directory."""
+    return Path(__file__).resolve().parent.parent / "data" / "models" / "default"
+
+
+def resolve_model_dir(models_root: Path | None = None) -> tuple[Path, bool]:
+    """Resolve model directory: user's latest trained set first, otherwise bundled default.
+
+    Returns:
+        tuple[Path, bool]: (model_dir, is_bundled) where is_bundled is True if using
+        the bundled default models set.
+
+    Raises:
+        FileNotFoundError: If neither user model nor bundled default model exists.
+    """
+    root = models_root or (get_data_dir() / "models")
+    latest_id = get_latest_model_id(root)
+    if latest_id:
+        user_dir = root / latest_id
+        if user_dir.exists() and (user_dir / "model_card.json").exists():
+            return user_dir, False
+
+    bundled = get_bundled_model_dir()
+    if bundled.exists() and (bundled / "model_card.json").exists():
+        return bundled, True
+
+    raise FileNotFoundError(
+        "No trained model set found. No user model exists and bundled default is missing."
+    )
+
+
 def list_model_sets(models_root: Path | None = None) -> list[dict[str, Any]]:
     """List all available trained model sets with summary metadata."""
     root = models_root or (get_data_dir() / "models")

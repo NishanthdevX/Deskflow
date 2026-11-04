@@ -8,7 +8,23 @@ Deskflow samples local Windows and macOS telemetry, runs a measured performance 
 trained models to predict probe slowdown 20 seconds ahead. It reports likely pressure, offers
 confirmed safe fixes, and records data locally for offline evaluation.
 
-Status: Phase 6 repository health and terminal UI work is in progress. See `docs/STATUS.md`.
+Status: Version 0.1.0 release packaging and one-line installers complete. See `docs/STATUS.md`.
+
+## Quick Start
+
+Windows PowerShell (no administrator rights required):
+
+```powershell
+irm https://raw.githubusercontent.com/NishanthdevX/Deskflow/main/install.ps1 | iex
+```
+
+macOS Terminal (no administrator rights required):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NishanthdevX/Deskflow/main/install.sh | bash
+```
+
+These scripts verify `uv`, provision an isolated runtime without administrator privileges or permanent PATH modifications, and open the Deskflow interactive home menu. See [docs/INSTALL.md](docs/INSTALL.md) for verification details, offline usage, and uninstallation.
 
 ## Installation
 

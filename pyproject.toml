@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "deskflow"
-version = "0.1.0.dev0"
+version = "0.1.0"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 readme = "README.md"
@@ -40,6 +40,11 @@ dev = [
     # type stubs
     "pandas-stubs",
     "types-psutil",
+]
+
+[tool.hatch.build]
+artifacts = [
+    "src/deskflow/data/models/default/*",
 ]
 
 [tool.hatch.build.targets.wheel]
