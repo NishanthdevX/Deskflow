@@ -6,6 +6,7 @@ import json
 import re
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from deskflow.commands.check import check_command
@@ -53,10 +54,26 @@ def test_report_all_formats(tmp_path: Path) -> None:
     assert "limitations" in data
 
 
-def test_synthetic_banner_present(tmp_path: Path) -> None:
+def test_synthetic_banner_present(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify synthetic model banner is rendered on terminal, Markdown, and HTML."""
     html_out = tmp_path / "banner_test.html"
     md_out = tmp_path / "banner_test.md"
+
+    import deskflow.commands.report as report_cmd
+
+    orig_load_report_data = report_cmd.load_report_data
+    orig_load_card = report_cmd.load_model_card
+
+    monkeypatch.setattr(
+        report_cmd,
+        "load_report_data",
+        lambda p=None: {**orig_load_report_data(p), "synthetic": True},
+    )
+    monkeypatch.setattr(
+        report_cmd,
+        "load_model_card",
+        lambda p: {**orig_load_card(p), "synthetic": True},
+    )
 
     res = runner.invoke(
         report_app,

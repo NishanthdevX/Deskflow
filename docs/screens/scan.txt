@@ -1,32 +1,32 @@
+Measuring system telemetry and probes... -------------------------      0:00:03
 Warning: Out-of-range telemetry detected (features exceed training 
 distribution).
 +----------------------- [SCAN SUMMARY: DESKFLOW SCAN] -----------------------+
-| OS: Windows 11POWER: batteryMODEL: RandomForest  BASELINE: 3d agoSCAN: 0.5s |
-|                             DEMO                                            |
+| OS: Windows 11   POWER: ac  MODEL: Ridge   BASELINE: 15h ago   SCAN: 15.9s  |
 +-----------------------------------------------------------------------------+
 +-------------------------- [HEALTH AND PREDICTION] --------------------------+
 | +-----------------++-----------------++-----------------++----------------+ |
 | | [HEALTH]        || [NEXT 20 S]     || [LIKELY CAUSE]  || [UNUSUAL]      | |
-| | 95/100  Good    || 1.10x  vs       || healthy  52%    || Yes  0.64      | |
+| | 100/100  Good   || 0.63x  vs       || healthy  74%    || Yes  0.63      | |
 | | 100 = Baseline  || baseline        || conf            || score          | |
-| | | Good          || Horizon 20s |   || Telemetry tag | || IsolationFore… | |
-| | performance     || 110% baseline   || 52% confidence  || | Thresh 0.54  | |
-| | #############-  || ratio           || #######-------  || ############## | |
-| | 95%             || #####---------  || 52%             || 100%           | |
-| +-----------------+| 37%             |+-----------------++----------------+ |
+| | | Good          || Horizon 20s |   || Telemetry tag | || IsolationForeâ€¦ | |
+| | performance     || 63% baseline    || 74% confidence  || | Thresh 0.60  | |
+| | ##############  || ratio           || ##########----  || ############## | |
+| | 100%            || ###-----------  || 74%             || 100%           | |
+| +-----------------+| 21%             |+-----------------++----------------+ |
 |                    +-----------------+                                      |
 +-----------------------------------------------------------------------------+
 +-----------------------------------------------------------------------------+
 | +------- [ WHY: TOP FACTORS ] -------++---------- [ RESOURCES ] ----------+ |
 | | +--------------------------------+ || +-------------------------------+ | |
-| | | elevated OS context    | ##### | || | CPU     | ##-------- | ____"* | | |
-| | | switching (+0.05)      |       | || |         | 15%        |        | | |
-| | | high memory pressure   | ##### | || | Memory  | ########## | ____** | | |
-| | | (+0.02)                |       | || |         | 84%        |        | | |
-| | | elevated system thread | ##### | || | Disk    | ---------- | ______ | | |
-| | | count (+0.02)          |       | || | Busy    | 0%         |        | | |
-| | +--------------------------------+ || | Swap    | ######---- | ____^^ | | |
-| +------------------------------------+| |         | 51%        |        | | |
+| | | memory probe slower    | ##### | || | CPU     | #--------- | ____*_ | | |
+| | | than usual (+0.00)     |       | || |         | 8%         |        | | |
+| | | disk probe slower than | ##### | || | Memory  | #########- | ____"" | | |
+| | | usual (+0.00)          |       | || |         | 72%        |        | | |
+| | +--------------------------------+ || | Disk    | ---------- | ______ | | |
+| +------------------------------------+| | Busy    | 0%         |        | | |
+|                                       | | Swap    | ######---- | ____"* | | |
+|                                       | |         | 47%        |        | | |
 |                                       | +-------------------------------+ | |
 |                                       +-----------------------------------+ |
 +-----------------------------------------------------------------------------+
@@ -34,19 +34,24 @@ distribution).
 | +-------------------------------------------------------------------------+ |
 | | Category        | Status | Details                                      | |
 | |-----------------+--------+----------------------------------------------| |
-| | Performance     | Good   | 95/100, ML prediction ########               | |
-| | Memory          | Fair   | 2.5 GB free #-------                         | |
+| | Performance     | Good   | 100/100, ML prediction ########              | |
+| | Memory          | Good   | 4.3 GB free ##------                         | |
 | | Disk space      | Poor   | Critical low space: C:\ (28 GB free, 92%     | |
 | |                 |        | full) #-------                               | |
-| | Storage         | Good   | 5.3 MB cleanable                             | |
+| | Storage         | Good   | 0.0 MB cleanable                             | |
 | | Background apps | Good   | 0 group(s), 0.0 GB                           | |
 | +-------------------------------------------------------------------------+ |
 +-----------------------------------------------------------------------------+
 +------------------------------ [ HEAVY TASKS ] ------------------------------+
 | +-------------------------------------------------------------------------+ |
-| | Task                                             |    Metric |   Detail | |
-| |--------------------------------------------------+-----------+----------| |
-| | No heavy background tasks detected               |         - |        - | |
+| | Task                                  |       Metric |           Detail | |
+| |---------------------------------------+--------------+------------------| |
+| | clinfo.exe (1 proc)                   |    99.0% CPU |      21.5 MB RAM | |
+| | Antigravity IDE.exe (14 proc)         |     9.0% CPU |    1905.8 MB RAM | |
+| | chrome.exe (19 proc)                  |     1.6% CPU |    2875.1 MB RAM | |
+| | msedgewebview2.exe (14 proc)          |     1.6% CPU |    1645.0 MB RAM | |
+| | FvContainer.exe (1 proc)              |     0.6% CPU |      21.8 MB RAM | |
+| | pyrefly.exe (1 proc)                  |     0.0% CPU |     762.5 MB RAM | |
 | +-------------------------------------------------------------------------+ |
 +-----------------------------------------------------------------------------+
 +-------------------- [ ACTIONS: No action recommended ] ---------------------+
@@ -54,17 +59,17 @@ distribution).
 | |     |               |            | Measured      |                      | |
 | |   # | Tool          |    Risk    | Potential     | Scope / Action       | |
 | |-----+---------------+------------+---------------+----------------------| |
-| |   1 | Clean         |   [SAFE]   | 5.3 MB        | Deletes files older  | |
+| |   1 | Clean         |   [SAFE]   | 3.3 MB        | Deletes files older  | |
 | |     | temporary     |            | cleanable     | than 24h in temp     | |
 | |     | files         |            |               | roots                | |
 | |   2 | Clean browser |   [SAFE]   | 2.1 MB (10    | Clears browser       | |
 | |     | & app caches  |            | files)        | caches (pages load   | |
 | |     |               |            |               | slower once)         | |
-| |   3 | Empty Recycle | [CAUTION]  | 0.0 MB (0     | Empties Recycle Bin  | |
+| |   3 | Empty Recycle | [CAUTION]  | 220.1 MB (3   | Empties Recycle Bin  | |
 | |     | Bin / Trash   |            | items)        | permanently          | |
 | |     |               |            |               | (irreversible)       | |
-| |   4 | Trim process  |   [SAFE]   | 43 processes  | Reclaims memory      | |
-| |     | working sets  |            | using 5358.0  | working sets (effect | |
+| |   4 | Trim process  |   [SAFE]   | 44 processes  | Reclaims memory      | |
+| |     | working sets  |            | using 8056.2  | working sets (effect | |
 | |     |               |            | MB            | is temporary)        | |
 | |     |               |            | (reclaimable  |                      | |
 | |     |               |            | amount        |                      | |
@@ -73,12 +78,12 @@ distribution).
 | |     | windowed apps |            | 0 app         | idle background      | |
 | |     |               |            | group(s)      | windowed             | |
 | |     |               |            |               | applications         | |
-| |   6 | End heavy     | [CAUTION]  | 9 heavy tasks | Terminates top       | |
-| |     | background    |            | using 4191.1  | non-protected heavy  | |
+| |   6 | End heavy     | [CAUTION]  | 7 heavy tasks | Terminates top       | |
+| |     | background    |            | using 7560.0  | non-protected heavy  | |
 | |     | tasks         |            | MB            | background processes | |
 | |     |               |            | (reclaimable  |                      | |
 | |     |               |            | amount        |                      | |
 | |     |               |            | unknown)      |                      | |
 | +-------------------------------------------------------------------------+ |
-+--- Timings: measure 0.00s | storage 0.03s | infer 0.2871s | total 0.54s ----+
-Scan completed in 0.5s.
++-- Timings: measure 14.71s | storage 0.00s | infer 0.2431s | total 15.88s ---+
+Scan completed in 15.9s.

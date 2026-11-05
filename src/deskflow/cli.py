@@ -237,11 +237,16 @@ def ac(
 
 @app.command(
     "full",
-    help="Stress test with live accuracy of every model (coming Phase 15).",
+    help="10-minute stress test with live accuracy evaluation.",
 )
-def full() -> None:
+def full(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt."),
+    plain: bool = typer.Option(False, "--plain", help="Render pure ASCII without colors."),
+) -> None:
     """Full 10-minute stress test with live accuracy evaluation."""
-    typer.echo("deskflow full: available in the next release (Phase 15).")
+    from deskflow.commands.full import full_command
+
+    full_command(yes=yes, plain=plain)
 
 
 app.add_typer(fix_app, name="fix")
@@ -249,11 +254,19 @@ app.add_typer(fix_app, name="fix")
 
 @app.command(
     "pipeline",
-    help="Animated data, model, and inference pipeline (coming Phase 15).",
+    help="Animated data, model, and inference pipeline.",
 )
-def pipeline() -> None:
+def pipeline(
+    static: bool = typer.Option(
+        False, "--static", help="Print final frame once without animation."
+    ),
+    fast: bool = typer.Option(False, "--fast", help="Run animation at double speed."),
+    plain: bool = typer.Option(False, "--plain", help="Render pure ASCII without colors."),
+) -> None:
     """Animated visualization of data, models, and inference pipeline."""
-    typer.echo("deskflow pipeline: available in the next release (Phase 15).")
+    from deskflow.commands.pipeline import pipeline_command
+
+    pipeline_command(static=static, fast=fast, plain=plain)
 
 
 app.add_typer(info_app, name="info")
@@ -482,19 +495,19 @@ def show_home_menu(input_fn: Callable[[str], str] = input) -> None:
             with contextlib.suppress(typer.Exit):
                 run_power_check("ac", input_fn=input_fn)
         elif choice == "3":
-            console.print(
-                "[bold yellow]deskflow full: available in the next release (Phase 15)."
-                "[/bold yellow]\n"
-            )
+            from deskflow.commands.full import full_command
+
+            with contextlib.suppress(typer.Exit):
+                full_command(input_fn=input_fn)
         elif choice == "4":
             from deskflow.commands.fix import fix_command
 
             fix_command(dry_run=False)
         elif choice == "5":
-            console.print(
-                "[bold cyan]deskflow pipeline: available in the next release (Phase 15)."
-                "[/bold cyan]\n"
-            )
+            from deskflow.commands.pipeline import pipeline_command
+
+            with contextlib.suppress(typer.Exit):
+                pipeline_command()
         elif choice == "6":
             from deskflow.commands.info import info_command
 

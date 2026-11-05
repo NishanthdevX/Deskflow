@@ -48,6 +48,7 @@ def scan_command(
         14,
         "--seconds",
         "-s",
+        min=13,
         help="Measuring duration in seconds (default 14, min 13).",
     ),
     output_json: bool = typer.Option(

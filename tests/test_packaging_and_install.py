@@ -35,9 +35,19 @@ def test_resolve_model_dir_fallback(tmp_path: Path) -> None:
     assert (resolved_path / "model_card.json").exists()
 
 
-def test_models_export_cli(tmp_path: Path) -> None:
+def test_models_export_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test 'deskflow models export' CLI command with synthetic check."""
     out_dir = tmp_path / "exported"
+
+    # Mock load_model_card to simulate synthetic model set refusal
+    import deskflow.commands.models as models_cmd
+
+    orig_load_card = models_cmd.load_model_card
+    monkeypatch.setattr(
+        models_cmd,
+        "load_model_card",
+        lambda p: {**orig_load_card(p), "synthetic": True},
+    )
 
     # 1. Export synthetic without allow-synthetic should fail
     result_refuse = runner.invoke(

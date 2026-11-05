@@ -10,9 +10,9 @@
 |                            |        | VRAM)                               | |
 |                            |        | NVIDIA GeForce RTX 3060 Laptop GPU  | |
 |                            |        | (6.0 GB VRAM)                       | |
-|                            |Memory  | 9.7 / 15.2 GB (5.6 GB free, 63%)    | |
-|                            |        | #####---                            | |
-|                            |Swap    | 15.0 GB (44%) ###-----              | |
+|                            |Memory  | 10.9 / 15.2 GB (4.3 GB free, 71%)   | |
+|                            |        | ######--                            | |
+|                            |Swap    | 16.2 GB (47%) ####----              | |
 |                            |Disk    | C:\ [NTFS] 323/351 GB (28 GB free,  | |
 |                            |        | 91%) [WARN] #######-                | |
 |                            |        | D:\ [NTFS] 193/301 GB (108 GB free, | |
@@ -20,8 +20,8 @@
 |                            |        | E:\ [NTFS] 64/101 GB (37 GB free,   | |
 |                            |        | 63%) #####---                       | |
 |                            |Display | 1920x1080                           | |
-|                            |Power   | Battery 75% (Discharging)           | |
-|                            |Uptime  | 4h 31m                              | |
+|                            |Power   | Battery 97% (Charging/AC)           | |
+|                            |Uptime  | 3h 13m                              | |
 |                            |Version | v0.1.0                              | |
 |                            +----------------------------------------------+ |
 +-----------------------------------------------------------------------------+

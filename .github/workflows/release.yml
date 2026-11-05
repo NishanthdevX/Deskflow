@@ -33,13 +33,15 @@ jobs:
           Write-Host "Release tag version: $tag"
           $pyproject = (Get-Content pyproject.toml | Select-String '^version = "(.*)"').Matches.Groups[1].Value
           Write-Host "pyproject.toml version: $pyproject"
+          $init = (Get-Content src/deskflow/__init__.py | Select-String '__version__: str = "(.*)"').Matches.Groups[1].Value
+          Write-Host "src/deskflow/__init__.py version: $init"
           $ps1 = (Get-Content install.ps1 | Select-String '^\$Version = ''(.*)''').Matches.Groups[1].Value
           Write-Host "install.ps1 version: $ps1"
           $sh = (Get-Content install.sh | Select-String '^VERSION="(.*)"').Matches.Groups[1].Value
           Write-Host "install.sh version: $sh"
 
-          if ($tag -ne $pyproject -or $tag -ne $ps1 -or $tag -ne $sh) {
-            Write-Error "Version mismatch: Tag ($tag) vs pyproject ($pyproject) vs ps1 ($ps1) vs sh ($sh)"
+          if ($tag -ne $pyproject -or $tag -ne $init -or $tag -ne $ps1 -or $tag -ne $sh) {
+            Write-Error "Version mismatch: Tag ($tag) vs pyproject ($pyproject) vs init ($init) vs ps1 ($ps1) vs sh ($sh)"
             exit 1
           }
 
@@ -87,6 +89,6 @@ jobs:
         with:
           files: |
             dist/*
-          prerelease: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
 

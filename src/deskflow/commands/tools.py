@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 from deskflow.commands.baseline import app as baseline_app
+from deskflow.commands.build_model import build_model_command
 from deskflow.commands.check import app as check_app
 from deskflow.commands.collect import app as collect_app
 from deskflow.commands.dataset import app as dataset_app
@@ -37,6 +38,8 @@ app = typer.Typer(
 )
 
 TOOLS_REGISTRY: list[tuple[str, str]] = [
+    ("selftest", "Run automated end-to-end verification self-test."),
+    ("build-model", "Build, validate, tune, and export models from run directories."),
     ("verify", "Verify model artifact checksums against the model card."),
     ("scan", "Sample system telemetry, evaluate models, and compute health score."),
     ("watch", "Live accuracy verification against future 20s horizons."),
@@ -75,6 +78,16 @@ def tools_default(ctx: typer.Context) -> None:
         console.print(
             "\n[dim]Run 'deskflow tools <tool> --help' or 'deskflow <tool>' for details.[/dim]"
         )
+
+
+@app.command("selftest", help="Run automated end-to-end verification self-test.")
+def selftest(
+    plain: bool = typer.Option(False, "--plain", help="Render pure ASCII without colors."),
+) -> None:
+    """Run automated end-to-end self-test replacing manual verification."""
+    from deskflow.commands.selftest import selftest_command
+
+    selftest_command(plain=plain)
 
 
 @app.command("verify", help="Check model files on disk against card SHA-256 hashes.")
@@ -165,6 +178,7 @@ def scan_cmd(
 
 
 # Attach remaining tools as subcommands under 'deskflow tools <tool>'
+app.command("build-model")(build_model_command)
 app.add_typer(watch_app, name="watch")
 app.add_typer(check_app, name="check")
 app.add_typer(report_app, name="report")

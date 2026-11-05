@@ -2,25 +2,25 @@
 +-----------------------------------------------------------------------------+
 | # | Tool               |   Risk    | Measured Potential | What it changes   |
 |---+--------------------+-----------+--------------------+-------------------|
-| 1 | Clean temporary    |  [SAFE]   |   5.3 MB cleanable | Deletes files     |
+| 1 | Clean temporary    |  [SAFE]   |   3.3 MB cleanable | Deletes files     |
 |   | files              |           |                    | older than 24h in |
 |   |                    |           |                    | temp roots        |
 | 2 | Clean browser &    |  [SAFE]   |  2.1 MB (10 files) | Clears browser    |
 |   | app caches         |           |                    | caches (pages     |
 |   |                    |           |                    | load slower once) |
-| 3 | Empty Recycle Bin  | [CAUTION] |   0.0 MB (0 items) | Empties Recycle   |
+| 3 | Empty Recycle Bin  | [CAUTION] | 220.1 MB (3 items) | Empties Recycle   |
 |   | / Trash            |           |                    | Bin permanently   |
 |   |                    |           |                    | (irreversible)    |
-| 4 | Trim process       |  [SAFE]   | 43 processes using | Reclaims memory   |
-|   | working sets       |           |          5370.6 MB | working sets      |
+| 4 | Trim process       |  [SAFE]   | 44 processes using | Reclaims memory   |
+|   | working sets       |           |          8062.5 MB | working sets      |
 |   |                    |           |       (reclaimable | (effect is        |
 |   |                    |           |    amount unknown) | temporary)        |
 | 5 | Close idle         | [CAUTION] |    0.0 MB across 0 | Gracefully closes |
 |   | windowed apps      |           |       app group(s) | idle background   |
 |   |                    |           |                    | windowed          |
 |   |                    |           |                    | applications      |
-| 6 | End heavy          | [CAUTION] |      9 heavy tasks | Terminates top    |
-|   | background tasks   |           |    using 4203.7 MB | non-protected     |
+| 6 | End heavy          | [CAUTION] |      8 heavy tasks | Terminates top    |
+|   | background tasks   |           |    using 7660.9 MB | non-protected     |
 |   |                    |           |       (reclaimable | heavy background  |
 |   |                    |           |    amount unknown) | processes         |
 +-----------------------------------------------------------------------------+

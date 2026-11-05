@@ -11,7 +11,7 @@ import logging
 import math
 import platform
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import psutil
 import typer
@@ -169,6 +169,19 @@ def _collect_fix_effectiveness(
     return len(valid_records), tool_stats, f"{len(valid_records)} non-dry-run fix runs recorded."
 
 
+def _collect_full_scan_summary(data_dir: Path) -> dict[str, Any] | None:
+    """Collect latest full scan stress test results from sessions directory."""
+    latest_file = data_dir / "sessions" / "full_scan_latest.json"
+    if not latest_file.exists():
+        return None
+    try:
+        with open(latest_file, encoding="utf-8") as f:
+            data = json.load(f)
+            return cast(dict[str, Any], data)
+    except Exception:
+        return None
+
+
 def generate_report(
     html: Path | None = None,
     md: Path | None = None,
@@ -192,7 +205,7 @@ def generate_report(
         card = {}
         prov = load_provenance()
 
-    is_synth = bool(report_data.get("synthetic", card.get("synthetic", True)))
+    is_synth = prov.synthetic or bool(report_data.get("synthetic", card.get("synthetic", False)))
     synth_banner = "DEMO MODEL (SYNTHETIC DATA - NOT A REAL WORLD RESULT)"
 
     # Machine summary
@@ -583,6 +596,64 @@ def generate_report(
     for lim in limitations:
         console.print(f"- {lim}")
 
+    # 12. FULL SCAN STRESS TEST
+    console.print("\n[bold cyan]12. [ FULL SCAN ][/bold cyan]")
+    full_scan_data = _collect_full_scan_summary(data_dir)
+    full_report["full_scan"] = full_scan_data
+    if full_scan_data:
+        s_id = full_scan_data.get("session_id", "unknown")
+        p_st = full_scan_data.get("power_state", "unknown")
+        dt_ts = full_scan_data.get("ts_utc", "")[:19]
+        n_pairs = full_scan_data.get("resolved_pairs_count", 0)
+        is_comp = full_scan_data.get("completed", False)
+        status_str = "COMPLETED" if is_comp else "PARTIAL"
+
+        console.print(
+            f"Session: [bold]{s_id}[/bold] ({p_st.upper()} power) | "
+            f"Date: {dt_ts} | Status: [bold green]{status_str}[/bold green] | "
+            f"Resolved Pairs: {n_pairs}"
+        )
+
+        stages = full_scan_data.get("stage_results", [])
+        if stages:
+            t_stg = Table(box=box_style, expand=True)
+            t_stg.add_column("Stage / Scenario", style="bold")
+            t_stg.add_column("Peak Slowdown", justify="right")
+            t_stg.add_column("Primary MAE", justify="right")
+            t_stg.add_column("Persistence MAE", justify="right")
+            t_stg.add_column("Cause Accuracy", justify="right")
+            for st in stages:
+                t_stg.add_row(
+                    st.get("name", "stage"),
+                    f"{st.get('peak_ratio', 1.0):.2f}x",
+                    f"{st.get('primary_mae', 0.0):.4f}",
+                    f"{st.get('pers_mae', 0.0):.4f}",
+                    f"{st.get('cause_acc', 100.0):.1f}%",
+                )
+            console.print(t_stg)
+
+        boot = full_scan_data.get("block_bootstrap", {})
+        if boot:
+            t_bt = Table(
+                box=box_style,
+                expand=True,
+                title="[ Live Block Bootstrap Evaluation (B=5, 1000 resamples) ]",
+            )
+            t_bt.add_column("Model", style="bold")
+            t_bt.add_column("Live MAE", justify="right")
+            t_bt.add_column("95% Bootstrap CI", justify="right")
+            for m in ("XGBoost", "RandomForest", "Ridge", "Persistence"):
+                m_info = boot.get(m, {})
+                m_mae = m_info.get("mae", 0.0)
+                m_ci = m_info.get("ci_95", [0.0, 0.0])
+                t_bt.add_row(m, f"{m_mae:.4f}", f"[{m_ci[0]:.4f}, {m_ci[1]:.4f}]")
+            console.print(t_bt)
+    else:
+        console.print(
+            "[dim]No full scan session recorded yet. "
+            "Run 'deskflow full' to measure 10-minute stress test.[/dim]"
+        )
+
     console.print(f"\n[dim]{prov.footer_string()}[/dim]")
     console.print()
     return full_report
@@ -688,5 +759,27 @@ def _write_markdown_report(data: dict[str, Any], output_path: Path) -> None:
     for lim in data.get("limitations", []):
         lines.append(f"- {lim}")
     lines.append("")
+
+    fs = data.get("full_scan")
+    if fs:
+        lines.extend(
+            [
+                "## 4. Full Scan Stress Test",
+                "",
+                f"- Session ID: {fs.get('session_id')}",
+                f"- Power State: {fs.get('power_state', '').upper()}",
+                f"- Resolved Pairs: {fs.get('resolved_pairs_count', 0)}",
+                "",
+                "| Stage | Peak Slowdown | Primary MAE | Persistence MAE | Cause Accuracy |",
+                "| :--- | :---: | :---: | :---: | :---: |",
+            ]
+        )
+        for st in fs.get("stage_results", []):
+            lines.append(
+                f"| {st.get('name')} | {st.get('peak_ratio', 1.0):.2f}x | "
+                f"{st.get('primary_mae', 0.0):.4f} | {st.get('pers_mae', 0.0):.4f} | "
+                f"{st.get('cause_acc', 100.0):.1f}% |"
+            )
+        lines.append("")
 
     output_path.write_text("\n".join(lines), encoding="utf-8")

@@ -5,7 +5,7 @@
 set -euo pipefail
 
 REPO="NishanthdevX/Deskflow"
-VERSION="0.1.0"
+VERSION="0.2.0"
 WHEEL_URL="https://github.com/${REPO}/releases/download/v${VERSION}/deskflow-${VERSION}-py3-none-any.whl"
 SUMS_URL="https://github.com/${REPO}/releases/download/v${VERSION}/SHA256SUMS"
 
@@ -28,6 +28,11 @@ CACHED_WHEEL="${CACHE_DIR}/${WHEEL_FILE_NAME}"
 CACHED_SUMS="${CACHE_DIR}/SHA256SUMS"
 
 DRY_RUN="${DESKFLOW_DRYRUN:-0}"
+for arg in "$@"; do
+    if [ "$arg" = "--dry-run" ] || [ "$arg" = "-DryRun" ]; then
+        DRY_RUN=1
+    fi
+done
 INSTALL_TOOL="${DESKFLOW_INSTALL:-0}"
 LOCAL_WHEEL="${DESKFLOW_WHEEL:-}"
 TEST_MISMATCH="${DESKFLOW_TEST_HASH_MISMATCH:-0}"

@@ -38,8 +38,8 @@ To configure PyPI Trusted Publishing for Deskflow:
    ```
 2. Tag the release commit following Semantic Versioning (`vMAJOR.MINOR.PATCH`):
    ```bash
-   git tag -a v0.1.0 -m "Release v0.1.0"
-   git push origin v0.1.0
+   git tag -a v0.2.0 -m "Release v0.2.0"
+   git push origin v0.2.0
    ```
 3. Create a GitHub Release referencing the tag.
 4. When `PUBLISH_TO_PYPI` is set to `"true"`, GitHub Actions builds the wheel and sdist, verifies hashes, and uploads the distribution directly to PyPI using short-lived OIDC tokens.

@@ -54,6 +54,8 @@ class LabRunner:
         config_dir: Path | None = None,
         status_callback: Callable[[str, float, float], None] | None = None,
         enable_storage: bool = False,
+        source: str = "lab",
+        on_record: Callable[[Record], None] | None = None,
     ) -> None:
         self.scenario = scenario
         self.pre_duration_s = pre_duration_s
@@ -64,6 +66,8 @@ class LabRunner:
         self.config_dir = config_dir
         self.status_callback = status_callback
         self.enable_storage = enable_storage
+        self.source = source
+        self.on_record = on_record
 
         self.machine_id = get_or_create_machine_id(config_dir=config_dir)
         self.session_id = session_id or f"lab-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
@@ -204,6 +208,11 @@ class LabRunner:
                     storage=storage,
                 )
                 self.recorder.write(record)
+                if self.on_record is not None:
+                    try:
+                        self.on_record(record)
+                    except Exception as cb_exc:
+                        logger.warning("on_record callback error: %s", cb_exc)
 
                 if self.status_callback is not None:
                     elapsed = now_mono - start_mono
@@ -234,6 +243,7 @@ class LabRunner:
 
         # Write sidecar JSON
         meta_dict = {
+            "source": self.source,
             "scenario": self.scenario.name,
             "intensity": self.scenario.intensity,
             "pattern": self.scenario.pattern,

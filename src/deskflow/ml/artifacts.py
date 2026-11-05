@@ -50,6 +50,12 @@ def save_model_set(
     primary_models: dict[str, str] | None = None,
     X_train: Any | None = None,
     training_percentiles: dict[str, Any] | None = None,
+    train_rows: int | None = None,
+    test_rows: int | None = None,
+    sessions_count: int | None = None,
+    machines_count: int | None = None,
+    power_states: list[str] | None = None,
+    gates_passed: bool | None = None,
 ) -> Path:
     """Serialize all runtime-ready models, cards, and predictions to user_data_dir."""
     root = models_root or (get_data_dir() / "models")
@@ -156,6 +162,12 @@ def save_model_set(
         "training_percentiles": training_percentiles or {},
         "created_utc": datetime.now(UTC).isoformat(),
         "git_commit": git_commit,
+        "train_rows": train_rows if train_rows is not None else 0,
+        "test_rows": test_rows if test_rows is not None else 0,
+        "sessions_count": sessions_count if sessions_count is not None else 1,
+        "machines_count": machines_count if machines_count is not None else 1,
+        "power_states": power_states or ["ac", "battery"],
+        "gates_passed": gates_passed if gates_passed is not None else False,
         "models_sha256": models_sha256,
     }
 

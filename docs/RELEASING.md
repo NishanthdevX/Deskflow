@@ -45,8 +45,8 @@ All changes are documented in `CHANGELOG.md` following [Keep a Changelog](https:
    - Update `CHANGELOG.md` with release notes and date.
 3. **Commit and Tag**:
    ```bash
-   git commit -m "chore: release v0.1.0"
-   git tag -a v0.1.0 -m "Release v0.1.0"
+   git commit -m "chore: release v0.2.0"
+   git tag -a v0.2.0 -m "Release v0.2.0"
    git push origin main --tags
    ```
 4. **GitHub Release & Assets**:

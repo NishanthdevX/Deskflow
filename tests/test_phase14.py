@@ -27,14 +27,13 @@ runner = CliRunner()
 
 
 def test_model_provenance_loading() -> None:
-    """Verify ModelProvenance loads successfully and inspects synthetic card properties."""
+    """Verify ModelProvenance loads successfully and inspects card properties."""
     prov = load_provenance()
     assert isinstance(prov, ModelProvenance)
-    assert prov.synthetic is True
+    assert isinstance(prov.synthetic, bool)
     assert prov.model_dir.exists()
     assert isinstance(prov.model_hashes, dict)
     assert len(prov.model_hashes) > 0
-    assert "synthetic demo" in prov.footer_string().lower()
 
 
 def test_verify_model_hashes_valid_and_tampered(tmp_path: Path) -> None:
@@ -68,22 +67,35 @@ def test_verify_model_hashes_valid_and_tampered(tmp_path: Path) -> None:
 
 def test_truth_contract_synthetic_suppression(tmp_path: Path) -> None:
     """Verify user-facing reports suppress synthetic accuracy metrics and show truth banner."""
-    # 1. Plain report
-    res_plain = runner.invoke(app, ["report", "--plain"])
-    assert res_plain.exit_code == EXIT_OK
-    assert "NO REAL DATA YET" in res_plain.output
-    normalized = " ".join(res_plain.output.split())
-    assert "Run deskflow full to measure real accuracy on this machine." in normalized
-    # No synthetic MAE numbers or feature weights
-    assert "XGBoost: MAE" not in res_plain.output
+    synthetic_prov = ModelProvenance(
+        synthetic=True,
+        dataset_hash="synthetic_hash_1234",
+        train_rows=500,
+        test_rows=100,
+        sessions_count=2,
+        machines_count=1,
+        power_states=["ac"],
+        created_utc="2026-11-05T00:00:00Z",
+        git_commit="deadbeef",
+        model_dir=tmp_path,
+    )
+    with patch("deskflow.commands.report.load_provenance", return_value=synthetic_prov):
+        # 1. Plain report
+        res_plain = runner.invoke(app, ["report", "--plain"])
+        assert res_plain.exit_code == EXIT_OK
+        assert "NO REAL DATA YET" in res_plain.output
+        normalized = " ".join(res_plain.output.split())
+        assert "Run deskflow full to measure real accuracy on this machine." in normalized
+        # No synthetic MAE numbers or feature weights
+        assert "XGBoost: MAE" not in res_plain.output
 
-    # 2. HTML report
-    report_html_path = tmp_path / "report.html"
-    res_html = runner.invoke(app, ["report", "--html", str(report_html_path)])
-    assert res_html.exit_code == EXIT_OK
-    assert report_html_path.exists()
-    html_text = report_html_path.read_text(encoding="utf-8")
-    assert "NO REAL DATA YET" in html_text
+        # 2. HTML report
+        report_html_path = tmp_path / "report.html"
+        res_html = runner.invoke(app, ["report", "--html", str(report_html_path)])
+        assert res_html.exit_code == EXIT_OK
+        assert report_html_path.exists()
+        html_text = report_html_path.read_text(encoding="utf-8")
+        assert "NO REAL DATA YET" in html_text
 
     # 3. Tools verify command
     res_verify = runner.invoke(app, ["tools", "verify"])
@@ -125,14 +137,14 @@ def test_legacy_commands_still_callable() -> None:
     assert "[DESKFLOW ADVANCED TOOLS]" in res_tools.output
     assert "verify" in res_tools.output
 
-    # 3. stubs full & pipeline
-    res_full = runner.invoke(app, ["full"])
+    # 3. full & pipeline commands are callable
+    res_full = runner.invoke(app, ["full", "--help"])
     assert res_full.exit_code == EXIT_OK
-    assert "deskflow full: available in the next release (Phase 15)." in res_full.output
+    assert "Usage: deskflow full" in res_full.output
 
-    res_pipe = runner.invoke(app, ["pipeline"])
+    res_pipe = runner.invoke(app, ["pipeline", "--help"])
     assert res_pipe.exit_code == EXIT_OK
-    assert "deskflow pipeline: available in the next release (Phase 15)." in res_pipe.output
+    assert "Usage: deskflow pipeline" in res_pipe.output
 
 
 def test_power_check_preflight_mismatch() -> None:

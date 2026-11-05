@@ -5,7 +5,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $Repo = 'NishanthdevX/Deskflow'
-$Version = '0.1.0'
+$Version = '0.2.0'
 $WheelUrl = "https://github.com/$Repo/releases/download/v$Version/deskflow-$Version-py3-none-any.whl"
 $SumsUrl = "https://github.com/$Repo/releases/download/v$Version/SHA256SUMS"
 
@@ -31,8 +31,8 @@ $WheelFileName = "deskflow-$Version-py3-none-any.whl"
 $CachedWheel = Join-Path $CacheDir $WheelFileName
 $CachedSums = Join-Path $CacheDir "SHA256SUMS"
 
-# Inspect environment variables
-$DryRun = ($env:DESKFLOW_DRYRUN -eq '1')
+# Inspect environment variables and CLI parameters
+$DryRun = ($env:DESKFLOW_DRYRUN -eq '1') -or ($args -contains '-DryRun') -or ($args -contains '--dry-run')
 $InstallTool = ($env:DESKFLOW_INSTALL -eq '1')
 $LocalWheel = $env:DESKFLOW_WHEEL
 $TestMismatch = ($env:DESKFLOW_TEST_HASH_MISMATCH -eq '1')

@@ -5,31 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - 2026-11-04
+## [0.2.0] - 2026-11-05
 
 ### Added
-- Pre-bundled default ML models under `src/deskflow/data/models/default/` (size under 1.4 MB) supporting immediate out-of-the-box live scans.
-- `deskflow models export --to PATH [--allow-synthetic]` command to export serialized model packages.
-- Model resolution hierarchy: automatically resolves user-trained models first, falling back gracefully to bundled defaults.
-- Zero-dependency one-line user installers for Windows (`install.ps1`) and macOS (`install.sh`) running via `uvx` without administrator privileges or permanent environment changes.
-- GitHub Actions release automation (`.github/workflows/release.yml`) and installer smoke verification (`install-smoke` in `ci.yml`).
-- Installation and uninstallation documentation in `docs/INSTALL.md`.
-
-## [Unreleased]
-
-### Added
+- One-command automated model build: `deskflow tools build-model --runs DIR [DIR ...] [--export]` integrating dataset build with per-session baselines, dataset validation, describe, full hyperparameter tuning grids, and moving block bootstrap evaluation.
+- Hard quality gates (`deskflow.ml.gates`): enforced thresholds for training rows (>=1,000), test rows (>=300), test sessions (>=2), per-class balance (>=100 each), dual power states, validation purity, and prediction sanity ([0.0, 20.0]). Stops before export if any gate fails.
+- Real-number documentation generators:
+  - `scripts/update_readme_accuracy.py`: rewrites README Accuracy section between markers from verified `model_card.json` and `report_data.json`.
+  - `scripts/update_screens.py`: regenerates plain screen captures in `docs/screens/` using real CLI outputs.
+- Comprehensive 6-minute demonstration script (`docs/DEMO.md`) with measured durations, verbatim presenter text, and fallback workflows.
+- 10-minute system stress test: `deskflow full [--yes] [--plain]` executing 5 distinct workload stages (idle, CPU ramp, memory ramp, disk saturation, background load) with live 20s prediction resolution and moving block bootstrap evaluation.
+- Pipeline visualization: `deskflow pipeline [--fast] [--static] [--plain]` rendering dual-lane 8 fps architecture animations in terminal.
+- Automated 12-check self-test suite: `deskflow tools selftest [--plain]` covering truth contract, model hashes, baseline freshness, probe jitter, CLI commands, responsive layout, zero emoji, JSON purity, exit codes, execution latencies, installer dry runs, and offline socket verification.
 - Phase 14 Five-Command Interface v3 (`battery`, `plugged`, `full`, `fix`, `pipeline`, `info`, and `tools`).
 - Hardware preflight checks in `deskflow battery` and `deskflow plugged`: verifies matching power state (aborts with code `5` if mismatched), checks baseline age and drift (prompts for 40s calibration), and executes a 6-probe stability check.
 - Truth contract (`src/deskflow/truth.py`): tracks `ModelProvenance` loaded from `model_card.json` (`synthetic`, `dataset_hash`, `train_rows`, `test_rows`, `sessions_count`, `machines_count`, `power_states`, `git_commit`, `model_hashes`).
-- Truth banner enforcement: suppresses synthetic accuracy metrics across `scan`, `battery`, `plugged`, and `report`, displaying `"NO REAL DATA YET: this model was trained on synthetic data. Run deskflow full to measure real accuracy on this machine."`
 - `deskflow tools verify`: cryptographically verifies all serialized model artifacts against card SHA-256 hashes.
-- `release.yml` release gate: validates that production tags do not contain `synthetic: true` model bundles.
 - Standardized exit codes (`0` ok, `1` error/fail-on, `2` usage, `3` unsupported, `4` baseline missing, `5` declined/blocked/wrong power state).
-- Flag `--fail-on <fair|poor>` on scan and power checks.
-- Audit fixlog records `tool_id` to prevent `"unknown"` entries.
-- Report Fix Effectiveness table splits file bytes deleted and closed application memory into dedicated columns.
+- Section 12 `[ FULL SCAN ]` integrated into terminal, Markdown, and HTML reports.
 
-## [0.1.0.dev3] - 2026-11-01
+## [0.1.0] - 2026-11-04
 
 ### Added
 - Feature Set v2 with 27 canonical features, 6s and 12s rolling windows, 12s warm-up rule, and 20s prediction horizon.

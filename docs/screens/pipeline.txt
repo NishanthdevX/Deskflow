@@ -1,0 +1,50 @@
++------------------ [ LIVE TELEMETRY & INFERENCE PIPELINE ] ------------------+
+| +-------+   +-------+   +-------+   +-------+   +-------+   +-------+       |
+| |SENSORS|-->| PROBE |-->|FEATURES|-->|MODELS |-->|SCORE+ |-->|  FIX  |      |
+| |CPU RAM|   |3 micro|   |27 stats|   | Ridge |   | CAUSE |   |  AND  |      |
+| | disk  |   | tests |   |6/12 s |   |RF XGB |   |HEALTH |   |RE-SCAN|       |
+| +-------+   +-------+   +-------+   +-------+   +-------+   +-------+       |
+|     ------------------------------------------------------------*           |
++-----------------------------------------------------------------------------+
+STAGE VALUE: Fix Center: 0 safe tools available, 0.0 MB measured potential
++----------------- [ MODEL TRAINING PIPELINE (Model Card) ] ------------------+
+| COLLECT (lab + normal) -> DATASET (27 feats, holdout) -> TRAIN (grouped CV) |
+| -> EVALUATE (bootstrap) -> EXPORT                                           |
+| Dataset SHA-256: 61af1146 | Train: 1457 rows | Test: 500 rows (14 sessions, |
+| 1 machines)                                                                 |
++-----------------------------------------------------------------------------+
+
+                                [ MODELS USED ]                                
++-----------------------------------------------------------------------------+
+|                 |                    |                   |         Held-Out |
+| Task            | Model(s)           | Role / Function   |         Accuracy |
+|-----------------+--------------------+-------------------+------------------|
+| Regression      | XGBoost, RF, Ridge | Predicts          | MAE 0.124 [0.10, |
+|                 |                    | 20s-ahead probe   |            0.15] |
+|                 |                    | latency ratio     |                  |
+| Classification  | XGBoost Classifier | Tags bottleneck   |          F1 0.94 |
+|                 |                    | cause (CPU, RAM,  |       (held-out) |
+|                 |                    | Disk, Load)       |                  |
+| Anomaly         | Isolation Forest   | Flags unusual     |     Unsupervised |
+| Detection       |                    | telemetry vs      |                  |
+|                 |                    | healthy baseline  |                  |
+| Health Scoring  | Hardware-relative  | Computes 0-100    |    Deterministic |
+|                 | scaler             | system care       |                  |
+|                 |                    | rating            |                  |
++-----------------------------------------------------------------------------+
+
+                             [ HOW IT IS TRAINED ]                             
++-----------------------------------------------------------------------------+
+| Stage / Property       | Implementation & Methodology                       |
+|------------------------+----------------------------------------------------|
+| Data Collection        | Fault injection lab sessions (CPU, RAM, Disk,      |
+|                        | Load) + realistic user workload runs               |
+| Feature Engineering    | 27 rolling statistics over 6s and 12s windows      |
+|                        | (mean, p90, trend, probe latencies)                |
+| Splitting Strategy     | Grouped temporal holdout by session ID (newest     |
+|                        | sessions held out; zero leakage)                   |
+| Evaluation Protocol    | Moving block bootstrap (B=5, 1000 resamples, seed  |
+|                        | 42) 95% CI vs Persistence baseline                 |
+| Dataset Provenance     | SHA-256                                            |
+|                        | 61af1146ea1afcc9069a86bec29658028193fef1cd520520fâ€¦ |
++-----------------------------------------------------------------------------+

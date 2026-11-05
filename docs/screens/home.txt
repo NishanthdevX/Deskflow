@@ -1,16 +1,26 @@
-DESKFLOW v0.1.0
-Device health scan with ML slowdown prediction
-
-+------------------------------ [THIS MACHINE] -------------------------------+
-| OS: Windows 11  |  CPU: 16 cores  |  RAM: 15.2 GB  |  Power: Battery (75%)  |
-| |  Baseline: Calibrated (3d ago)                                            |
+                                                                               
+ Usage: python -m deskflow [OPTIONS] COMMAND [ARGS]...                         
+                                                                               
+ Device-care tool: samples system telemetry, measures performance, predicts    
+ sluggishness 20 seconds ahead, and suggests safe fixes.                       
+                                                                               
++- Options -------------------------------------------------------------------+
+| --version             Print version and exit.                               |
+| --verbose   -v        Enable verbose diagnostic logging.                    |
+| --debug               Enable full stack traces on uncaught exceptions.      |
+| --no-input            Disable interactive user prompts across commands.     |
+| --help                Show this message and exit.                           |
 +-----------------------------------------------------------------------------+
-[1] Full check   scan, fixes and report in one run
-[2] Quick scan   14 s health score and prediction
-[3] Fix Center   clean cache, free memory, close heavy tasks
-[4] Live watch   predictions versus reality, model comparison
-[5] System info  CPU, GPU, memory, disks
-[6] Report       graphs and model comparison
-[7] Prepare demo readiness checklist
-[Q] Quit
++- Commands ------------------------------------------------------------------+
+| battery   Sample telemetry, predict 20s slowdown, and verify accuracy on    |
+|           battery.                                                          |
+| plugged   Sample telemetry, predict 20s slowdown, and verify accuracy on AC |
+|           power (alias: ac).                                                |
+| full      10-minute stress test with live accuracy evaluation.              |
+| pipeline  Animated data, model, and inference pipeline.                     |
+| fix       Diagnose system, inspect fix tools, and execute verified          |
+|           remediations.                                                     |
+| info      Fast hardware and operating system summary.                       |
+| tools     Advanced diagnostic, laboratory, and developer tools.             |
++-----------------------------------------------------------------------------+
 

@@ -18,8 +18,10 @@ build/
 *.tar.gz
 
 # Data and model artifacts (kept local, never committed)
-data/
-models/
+/data/
+/models/
+runs/
+runs_*/
 *.pkl
 *.joblib
 *.parquet
@@ -28,6 +30,11 @@ report*.md
 report*.html
 *.html
 *.csv.gz
+
+# Ensure package data (bundled models) is always tracked
+!src/deskflow/data/**
+!src/deskflow/data/models/**
+!src/deskflow/data/models/default/**
 
 # Coverage
 .coverage

@@ -314,6 +314,65 @@ def generate_html_report(data: dict[str, Any], output_path: Path) -> Path:
             "<th>Avail Mem Change</th></tr></thead><tbody>" + "".join(fix_rows) + "</tbody></table>"
         )
 
+    # Full scan HTML
+    fs_data = data.get("full_scan")
+    if fs_data:
+        fs_id = html.escape(str(fs_data.get("session_id", "unknown")))
+        fs_pwr = html.escape(str(fs_data.get("power_state", "").upper()))
+        fs_date = html.escape(str(fs_data.get("ts_utc", "")[:19]))
+        fs_pairs = fs_data.get("resolved_pairs_count", 0)
+        fs_comp = "COMPLETED" if fs_data.get("completed", False) else "PARTIAL"
+
+        stg_rows = []
+        for st in fs_data.get("stage_results", []):
+            stg_rows.append(
+                f"<tr><td><strong>{html.escape(str(st.get('name')))}</strong></td>"
+                f"<td>{st.get('peak_ratio', 1.0):.2f}x</td>"
+                f"<td>{st.get('primary_mae', 0.0):.4f}</td>"
+                f"<td>{st.get('pers_mae', 0.0):.4f}</td>"
+                f"<td>{st.get('cause_acc', 100.0):.1f}%</td></tr>"
+            )
+        stg_table = ""
+        if stg_rows:
+            stg_table = (
+                "<table><thead><tr><th>Stage</th><th>Peak Slowdown</th>"
+                "<th>Primary MAE</th><th>Persistence MAE</th><th>Cause Accuracy</th></tr></thead>"
+                "<tbody>" + "".join(stg_rows) + "</tbody></table>"
+            )
+
+        boot = fs_data.get("block_bootstrap", {})
+        boot_rows = []
+        for m in ("XGBoost", "RandomForest", "Ridge", "Persistence"):
+            m_info = boot.get(m, {})
+            m_mae = m_info.get("mae", 0.0)
+            m_ci = m_info.get("ci_95", [0.0, 0.0])
+            boot_rows.append(
+                f"<tr><td><strong>{m}</strong></td>"
+                f"<td>{m_mae:.4f}</td>"
+                f"<td>[{m_ci[0]:.4f}, {m_ci[1]:.4f}]</td></tr>"
+            )
+        boot_table = ""
+        if boot_rows:
+            boot_table = (
+                "<h3 style='margin-top:16px;'>Live Block Bootstrap Evaluation "
+                "(B=5, 1000 resamples)</h3>"
+                "<table><thead><tr><th>Model</th><th>Live MAE</th>"
+                "<th>95% Bootstrap CI</th></tr></thead>"
+                "<tbody>" + "".join(boot_rows) + "</tbody></table>"
+            )
+
+        full_scan_html = (
+            f"<p>Session: <strong>{fs_id}</strong> ({fs_pwr} power) | "
+            f"Date: {fs_date} | Status: <strong>{fs_comp}</strong> | "
+            f"Resolved Pairs: <strong>{fs_pairs}</strong></p>"
+            f"{stg_table}{boot_table}"
+        )
+    else:
+        full_scan_html = (
+            "<p class='dim'>No full scan session recorded yet. "
+            "Run deskflow full to execute the 10-minute stress test.</p>"
+        )
+
     # Limitations list
     if is_synth:
         lim_items = f"<li>{html.escape(NO_REAL_DATA_MESSAGE)}</li>"
@@ -628,7 +687,12 @@ def generate_html_report(data: dict[str, Any], output_path: Path) -> Path:
     <p>{fix_summary.get("text", "No non-dry-run fixes recorded yet.")}</p>
   </div>
 
-  <h2>9. Factual Limitations</h2>
+  <h2>9. Full Scan Stress Test</h2>
+  <div class="card">
+    {full_scan_html}
+  </div>
+
+  <h2>10. Factual Limitations</h2>
   <div class="card">
     <ul>
       {lim_items}
