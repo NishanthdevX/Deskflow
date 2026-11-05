@@ -1,10 +1,14 @@
 """Command-line entry point for deskflow."""
 
+from __future__ import annotations
+
+import contextlib
 import logging
 import platform
 import shutil
 import sys
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import psutil
@@ -37,6 +41,7 @@ from deskflow.commands.support import (
     app_privacy,
     app_uninstall,
 )
+from deskflow.commands.tools import app as tools_app
 from deskflow.commands.watch import app as watch_app
 
 
@@ -71,192 +76,197 @@ app = DeskflowTyper(
     add_completion=False,
 )
 
-# Register subcommands
-app.add_typer(snapshot_app, name="snapshot")
-app.add_typer(collect_app, name="collect")
-app.add_typer(doctor_app, name="doctor")
-app.add_typer(baseline_app, name="baseline")
-app.add_typer(lab_app, name="lab")
-app.add_typer(dataset_app, name="dataset")
-app.add_typer(models_app, name="models")
-app.add_typer(watch_app, name="watch")
-app.add_typer(report_app, name="report")
-app.add_typer(prep_app, name="prep")
-app.add_typer(info_app, name="info")
-app.add_typer(check_app, name="check")
-app.add_typer(fix_app, name="fix")
-app.add_typer(app_bugreport, name="bugreport")
-app.add_typer(app_privacy, name="privacy")
-app.add_typer(app_data, name="data")
-app.add_typer(app_uninstall, name="uninstall")
-
-
-def show_home_menu(input_fn: Callable[[str], str] = input) -> None:
-    """Display the interactive launcher and loop until quit per terminal design v2."""
-    from deskflow.baseline import (
-        get_baseline_age_str,
-        get_current_power_state,
-        load_baseline,
-    )
-    from deskflow.platform.factory import get_adapter
-    from deskflow.ui.components import banner, domain_panel
-    from deskflow.ui.theme import use_plain_output
-
-    console = Console()
-    adapter = get_adapter()
-    plain = use_plain_output()
-
-    while True:
-        # 1. Header Banner
-        cols, _ = shutil.get_terminal_size(fallback=(100, 30))
-        console.print(banner(version=__version__, width=cols, plain=plain))
-
-        # 2. THIS MACHINE panel
-        pwr_state = get_current_power_state(adapter)
-        bat = adapter.battery()
-        pwr_info = f"Battery ({bat.percent:.0f}%)" if (bat and not bat.plugged_in) else "AC Power"
-        mem = psutil.virtual_memory()
-        ram_gb = mem.total / (1024**3)
-        cores = psutil.cpu_count(logical=True) or 1
-        os_info = f"{platform.system()} {platform.release()}"
-
-        try:
-            b = load_baseline(power_state=pwr_state)
-            b_state = f"Calibrated ({get_baseline_age_str(b)})"
-        except Exception:
-            b_state = "Uncalibrated"
-
-        machine_str = (
-            f"OS: {os_info}  |  CPU: {cores} cores  |  "
-            f"RAM: {ram_gb:.1f} GB  |  Power: {pwr_info}  |  Baseline: {b_state}"
-        )
-        console.print(
-            domain_panel(
-                "[THIS MACHINE]",
-                machine_str,
-                domain="system",
-                plain=plain,
-            )
-        )
-
-        # 3. Menu Options matching docs/DESIGN.md v2 exactly
-        console.print("[bold cyan][1][/bold cyan] Full check   scan, fixes and report in one run")
-        console.print("[bold cyan][2][/bold cyan] Quick scan   14 s health score and prediction")
-        console.print(
-            "[bold cyan][3][/bold cyan] Fix Center   clean cache, free memory, close heavy tasks"
-        )
-        console.print(
-            "[bold cyan][4][/bold cyan] Live watch   predictions versus reality, model comparison"
-        )
-        console.print("[bold cyan][5][/bold cyan] System info  CPU, GPU, memory, disks")
-        console.print("[bold cyan][6][/bold cyan] Report       graphs and model comparison")
-        console.print("[bold cyan][7][/bold cyan] Prepare demo readiness checklist")
-        console.print("[dim][Q] Quit[/dim]\n")
-
-        try:
-            choice = input_fn("Select: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            break
-
-        if choice.upper() in ("Q", "QUIT"):
-            break
-        elif choice == "1":
-            from deskflow.commands.check import check_command
-
-            check_command(input_fn=input_fn)
-        elif choice == "2":
-            from deskflow.commands.scan import scan_command
-
-            scan_command()
-        elif choice == "3":
-            from deskflow.commands.fix import fix_command
-
-            fix_command(dry_run=False)
-        elif choice == "4":
-            from deskflow.commands.watch import watch_command
-
-            watch_command()
-        elif choice == "5":
-            from deskflow.commands.info import info_command
-
-            info_command()
-        elif choice == "6":
-            from deskflow.commands.report import report_command
-
-            report_command()
-        elif choice == "7":
-            from deskflow.commands.prep import prep_command
-
-            prep_command()
+# ---------------------------------------------------------------------------
+# Primary visible commands (Phase 14 Section 9)
+# ---------------------------------------------------------------------------
 
 
 @app.command(
-    "train",
-    help="Train regression, classification, and anomaly models on engineered datasets.",
+    "battery",
+    help="Sample telemetry, predict 20s slowdown, and verify accuracy on battery.",
 )
-def train(
-    datasets: list[str] = typer.Option(
-        ...,
-        "--dataset",
-        "-d",
-        help="One or more parquet dataset paths to train on.",
-    ),
+def battery(
     quick: bool = typer.Option(
         False,
         "--quick",
-        help="Fast training mode skipping hyperparameter tuning grids.",
+        help="Fast 25s health scan without live accuracy verification.",
     ),
-    id: str | None = typer.Option(
+    long: bool = typer.Option(
+        False,
+        "--long",
+        help="Extended 135s check with ~26 resolved prediction pairs.",
+    ),
+    fail_on: str | None = typer.Option(
         None,
-        "--id",
-        help="Custom model set identifier.",
+        "--fail-on",
+        help="Exit 1 if health reaches 'fair' or 'poor'.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Confirm calibration without prompting.",
+    ),
+    json: bool = typer.Option(
+        False,
+        "--json",
+        help="Output raw JSON results.",
+    ),
+    plain: bool = typer.Option(
+        False,
+        "--plain",
+        help="Render pure ASCII without colors.",
     ),
 ) -> None:
-    """Train regression, classification, and anomaly models on engineered datasets."""
-    from pathlib import Path
+    """Run device-care check on battery power."""
+    from deskflow.commands.check_power import run_power_check
 
-    from deskflow.commands.train import train_command
-
-    train_command(datasets=[Path(p) for p in datasets], quick=quick, out_id=id)
+    run_power_check(
+        target_state="battery",
+        quick=quick,
+        long=long,
+        fail_on=fail_on,
+        yes=yes,
+        output_json=json,
+        plain=plain,
+    )
 
 
 @app.command(
-    "evaluate",
-    help="Evaluate trained model sets on test split and generate verification reports.",
+    "plugged",
+    help="Sample telemetry, predict 20s slowdown, and verify accuracy on AC power (alias: ac).",
 )
-def evaluate(
-    model_set: str = typer.Option(
-        "latest",
-        "--model-set",
-        "-m",
-        help="Model directory path or model set ID (default: 'latest').",
-    ),
-    plots: bool = typer.Option(
+def plugged(
+    quick: bool = typer.Option(
         False,
-        "--plots",
-        help="Generate PNG diagnostic plots (requires train extra with matplotlib).",
+        "--quick",
+        help="Fast 25s health scan without live accuracy verification.",
     ),
-    out: str | None = typer.Option(
+    long: bool = typer.Option(
+        False,
+        "--long",
+        help="Extended 135s check with ~26 resolved prediction pairs.",
+    ),
+    fail_on: str | None = typer.Option(
         None,
-        "--out",
-        "-o",
-        help="Path to write the Markdown evaluation report.",
+        "--fail-on",
+        help="Exit 1 if health reaches 'fair' or 'poor'.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Confirm calibration without prompting.",
+    ),
+    json: bool = typer.Option(
+        False,
+        "--json",
+        help="Output raw JSON results.",
+    ),
+    plain: bool = typer.Option(
+        False,
+        "--plain",
+        help="Render pure ASCII without colors.",
     ),
 ) -> None:
-    """Evaluate trained model sets on test split and generate verification reports."""
-    from pathlib import Path
+    """Run device-care check on AC power."""
+    from deskflow.commands.check_power import run_power_check
 
-    from deskflow.commands.evaluate import evaluate_command
-
-    evaluate_command(
-        model_set=Path(model_set),
-        plots=plots,
-        out=Path(out) if out else None,
+    run_power_check(
+        target_state="ac",
+        quick=quick,
+        long=long,
+        fail_on=fail_on,
+        yes=yes,
+        output_json=json,
+        plain=plain,
     )
+
+
+@app.command(
+    "ac",
+    help="Alias for plugged: check telemetry and prediction accuracy on AC power.",
+    hidden=True,
+)
+def ac(
+    quick: bool = typer.Option(
+        False,
+        "--quick",
+        help="Fast 25s health scan without live accuracy verification.",
+    ),
+    long: bool = typer.Option(
+        False,
+        "--long",
+        help="Extended 135s check with ~26 resolved prediction pairs.",
+    ),
+    fail_on: str | None = typer.Option(
+        None,
+        "--fail-on",
+        help="Exit 1 if health reaches 'fair' or 'poor'.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Confirm calibration without prompting.",
+    ),
+    json: bool = typer.Option(
+        False,
+        "--json",
+        help="Output raw JSON results.",
+    ),
+    plain: bool = typer.Option(
+        False,
+        "--plain",
+        help="Render pure ASCII without colors.",
+    ),
+) -> None:
+    """Run device-care check on AC power (alias for plugged)."""
+    from deskflow.commands.check_power import run_power_check
+
+    run_power_check(
+        target_state="ac",
+        quick=quick,
+        long=long,
+        fail_on=fail_on,
+        yes=yes,
+        output_json=json,
+        plain=plain,
+    )
+
+
+@app.command(
+    "full",
+    help="Stress test with live accuracy of every model (coming Phase 15).",
+)
+def full() -> None:
+    """Full 10-minute stress test with live accuracy evaluation."""
+    typer.echo("deskflow full: available in the next release (Phase 15).")
+
+
+app.add_typer(fix_app, name="fix")
+
+
+@app.command(
+    "pipeline",
+    help="Animated data, model, and inference pipeline (coming Phase 15).",
+)
+def pipeline() -> None:
+    """Animated visualization of data, models, and inference pipeline."""
+    typer.echo("deskflow pipeline: available in the next release (Phase 15).")
+
+
+app.add_typer(info_app, name="info")
+app.add_typer(tools_app, name="tools")
+
+# ---------------------------------------------------------------------------
+# Compatibility / hidden commands (callable directly, hidden in --help)
+# ---------------------------------------------------------------------------
 
 
 @app.command(
     "scan",
+    hidden=True,
     help="Sample system telemetry, evaluate ML models, compute health score, and suggest fixes.",
 )
 def scan(
@@ -293,10 +303,13 @@ def scan(
         help="Automatically confirm any required baseline calibration.",
     ),
     plain: bool = typer.Option(False, "--plain", help="Use ASCII-only, uncoloured output."),
+    fail_on: str | None = typer.Option(
+        None,
+        "--fail-on",
+        help="Exit 1 if health score status reaches 'fair' or 'poor'.",
+    ),
 ) -> None:
     """Run an end-to-end device scan, evaluate health score, and recommend fixes."""
-    from pathlib import Path
-
     from deskflow.commands.scan import scan_command
 
     scan_command(
@@ -307,7 +320,185 @@ def scan(
         replay=Path(replay) if replay else None,
         yes=yes,
         plain=plain,
+        fail_on=fail_on,
     )
+
+
+app.add_typer(snapshot_app, name="snapshot", hidden=True)
+app.add_typer(collect_app, name="collect", hidden=True)
+app.add_typer(doctor_app, name="doctor", hidden=True)
+app.add_typer(baseline_app, name="baseline", hidden=True)
+app.add_typer(lab_app, name="lab", hidden=True)
+app.add_typer(dataset_app, name="dataset", hidden=True)
+app.add_typer(models_app, name="models", hidden=True)
+app.add_typer(watch_app, name="watch", hidden=True)
+app.add_typer(report_app, name="report", hidden=True)
+app.add_typer(prep_app, name="prep", hidden=True)
+app.add_typer(check_app, name="check", hidden=True)
+app.add_typer(app_bugreport, name="bugreport", hidden=True)
+app.add_typer(app_privacy, name="privacy", hidden=True)
+app.add_typer(app_data, name="data", hidden=True)
+app.add_typer(app_uninstall, name="uninstall", hidden=True)
+
+
+@app.command(
+    "train",
+    hidden=True,
+    help="Train regression, classification, and anomaly models on engineered datasets.",
+)
+def train(
+    datasets: list[str] = typer.Option(
+        ...,
+        "--dataset",
+        "-d",
+        help="One or more parquet dataset paths to train on.",
+    ),
+    quick: bool = typer.Option(
+        False,
+        "--quick",
+        help="Fast training mode skipping hyperparameter tuning grids.",
+    ),
+    id: str | None = typer.Option(
+        None,
+        "--id",
+        help="Custom model set identifier.",
+    ),
+) -> None:
+    """Train regression, classification, and anomaly models on engineered datasets."""
+    from deskflow.commands.train import train_command
+
+    train_command(datasets=[Path(p) for p in datasets], quick=quick, out_id=id)
+
+
+@app.command(
+    "evaluate",
+    hidden=True,
+    help="Evaluate trained model sets on test split and generate verification reports.",
+)
+def evaluate(
+    model_set: str = typer.Option(
+        "latest",
+        "--model-set",
+        "-m",
+        help="Model directory path or model set ID (default: 'latest').",
+    ),
+    plots: bool = typer.Option(
+        False,
+        "--plots",
+        help="Generate PNG diagnostic plots (requires train extra with matplotlib).",
+    ),
+    out: str | None = typer.Option(
+        None,
+        "--out",
+        "-o",
+        help="Path to write the Markdown evaluation report.",
+    ),
+) -> None:
+    """Evaluate trained model sets on test split and generate verification reports."""
+    from deskflow.commands.evaluate import evaluate_command
+
+    evaluate_command(
+        model_set=Path(model_set),
+        plots=plots,
+        out=Path(out) if out else None,
+    )
+
+
+def show_home_menu(input_fn: Callable[[str], str] = input) -> None:
+    """Display the interactive launcher and loop until quit per Section 9."""
+    from deskflow.platform.factory import get_adapter
+    from deskflow.truth import load_provenance
+    from deskflow.ui.components import banner, domain_panel
+    from deskflow.ui.theme import use_plain_output
+
+    console = Console()
+    adapter = get_adapter()
+    plain = use_plain_output()
+
+    while True:
+        # 1. Header Banner
+        cols, _ = shutil.get_terminal_size(fallback=(100, 30))
+        console.print(banner(version=__version__, width=cols, plain=plain))
+
+        # 2. THIS MACHINE panel (Section 9)
+        bat = adapter.battery()
+        pwr_info = f"Battery ({bat.percent:.0f}%)" if (bat and not bat.plugged_in) else "AC Power"
+        mem = psutil.virtual_memory()
+        ram_gb = mem.total / (1024**3)
+        cores = psutil.cpu_count(logical=True) or 1
+        os_info = f"{platform.system()} {platform.release()}"
+
+        prov = load_provenance()
+        model_info = "synthetic demo" if prov.synthetic else f"real data, {prov.train_rows} rows"
+
+        machine_str = (
+            f"OS: {os_info}  |  CPU: {cores} cores  |  "
+            f"RAM: {ram_gb:.1f} GB  |  Power: {pwr_info}  |  Model: {model_info}"
+        )
+        console.print(
+            domain_panel(
+                "[THIS MACHINE]",
+                machine_str,
+                domain="system",
+                plain=plain,
+            )
+        )
+
+        # 3. Menu Options matching Section 9 exactly
+        console.print(
+            "[bold cyan][1][/bold cyan] Battery check     "
+            "about 75 s   health score, prediction, model comparison"
+        )
+        console.print("[bold cyan][2][/bold cyan] Plugged-in check  about 75 s   same, on AC power")
+        console.print(
+            "[bold cyan][3][/bold cyan] Full scan         "
+            "about 10 min stress test with live accuracy of every model"
+        )
+        console.print(
+            "[bold cyan][4][/bold cyan] Fix Center        "
+            "clean cache, free memory, close heavy tasks"
+        )
+        console.print(
+            "[bold cyan][5][/bold cyan] How it works      animated pipeline: data, models, training"
+        )
+        console.print("[bold cyan][6][/bold cyan] System info       CPU, GPU, memory, disks")
+        console.print("[dim][Q] Quit[/dim]\n")
+
+        try:
+            choice = input_fn("Select: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            break
+
+        if choice.upper() in ("Q", "QUIT"):
+            break
+        elif choice == "1":
+            from deskflow.commands.check_power import run_power_check
+
+            with contextlib.suppress(typer.Exit):
+                run_power_check("battery", input_fn=input_fn)
+        elif choice == "2":
+            from deskflow.commands.check_power import run_power_check
+
+            with contextlib.suppress(typer.Exit):
+                run_power_check("ac", input_fn=input_fn)
+        elif choice == "3":
+            console.print(
+                "[bold yellow]deskflow full: available in the next release (Phase 15)."
+                "[/bold yellow]\n"
+            )
+        elif choice == "4":
+            from deskflow.commands.fix import fix_command
+
+            fix_command(dry_run=False)
+        elif choice == "5":
+            console.print(
+                "[bold cyan]deskflow pipeline: available in the next release (Phase 15)."
+                "[/bold cyan]\n"
+            )
+        elif choice == "6":
+            from deskflow.commands.info import info_command
+
+            info_command()
 
 
 def _version_callback(value: bool) -> None:

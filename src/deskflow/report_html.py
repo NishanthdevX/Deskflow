@@ -10,6 +10,8 @@ import html
 from pathlib import Path
 from typing import Any
 
+from deskflow.truth import NO_REAL_DATA_MESSAGE
+
 
 def _render_whiskers_svg(leaderboard: list[dict[str, Any]], width: int = 680) -> str:
     """Render horizontal bar chart with 95% bootstrap CI whiskers as inline SVG."""
@@ -283,8 +285,44 @@ def generate_html_report(data: dict[str, Any], output_path: Path) -> Path:
         f"<td>{power_breakdown.get('battery', {}).get(m, 0.0):.4f}</td>" for m in sc_models
     )
 
+    # Fix effectiveness rows
+    file_tools = {"clean_temp", "clean_app_caches", "empty_recycle_bin"}
+    app_tools = {"close_idle_apps", "end_heavy_tasks"}
+    fix_rows = []
+    for tid, t_stat in fix_summary.get("stats", {}).items():
+        b_del = f"{t_stat['bytes_deleted'] / (1024**2):.1f} MB" if tid in file_tools else "-"
+        m_closed = (
+            f"{t_stat.get('app_memory_closed', 0.0) / (1024**2):.1f} MB"
+            if tid in app_tools
+            else "-"
+        )
+        if t_stat.get("mem_deltas"):
+            avg_m = sum(t_stat["mem_deltas"]) / len(t_stat["mem_deltas"]) / (1024**2)
+            avail_change = f"{avg_m:+.1f} MB"
+        else:
+            avail_change = "-"
+        fix_rows.append(
+            f"<tr><td><strong>{html.escape(tid)}</strong></td>"
+            f"<td>{t_stat['runs']}</td><td>{b_del}</td>"
+            f"<td>{m_closed}</td><td>{avail_change}</td></tr>"
+        )
+    fix_table_html = ""
+    if fix_rows:
+        fix_table_html = (
+            "<table><thead><tr><th>Tool</th><th>Runs</th>"
+            "<th>File Bytes Deleted</th><th>Memory of Closed Apps</th>"
+            "<th>Avail Mem Change</th></tr></thead><tbody>" + "".join(fix_rows) + "</tbody></table>"
+        )
+
     # Limitations list
-    lim_items = "".join(f"<li>{html.escape(lim)}</li>" for lim in limitations)
+    if is_synth:
+        lim_items = f"<li>{html.escape(NO_REAL_DATA_MESSAGE)}</li>"
+    else:
+        lim_items = "".join(f"<li>{html.escape(lim)}</li>" for lim in limitations)
+
+    no_data_banner = (
+        f'<div class="card"><div class="banner-warning">{NO_REAL_DATA_MESSAGE}</div></div>'
+    )
 
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
@@ -489,7 +527,10 @@ def generate_html_report(data: dict[str, Any], output_path: Path) -> Path:
   </div>
 
   <h2>2. Offline Model Leaderboard (Hold-Out Test Split)</h2>
-  <div class="card">
+  {
+        no_data_banner
+        if is_synth
+        else f'''<div class="card">
     {_render_whiskers_svg(leaderboard)}
     <table>
       <thead>
@@ -502,15 +543,23 @@ def generate_html_report(data: dict[str, Any], output_path: Path) -> Path:
         {"".join(leaderboard_rows)}
       </tbody>
     </table>
-  </div>
+  </div>'''
+    }
 
   <h2>3. Predicted vs Actual Telemetry (Test Trajectory)</h2>
-  <div class="card">
+  {
+        no_data_banner
+        if is_synth
+        else f'''<div class="card">
     {_render_line_chart_svg(time_series)}
-  </div>
+  </div>'''
+    }
 
   <h2>4. Subgroup Breakdowns</h2>
-  <div class="card">
+  {
+        no_data_banner
+        if is_synth
+        else f'''<div class="card">
     <h3>Scenario Breakdown (MAE)</h3>
     <table>
       <thead><tr><th>Scenario</th>{sc_headers}</tr></thead>
@@ -530,10 +579,14 @@ def generate_html_report(data: dict[str, Any], output_path: Path) -> Path:
         </tr>
       </tbody>
     </table>
-  </div>
+  </div>'''
+    }
 
   <h2>5. Classification & Anomaly Detection</h2>
-  <div class="card">
+  {
+        no_data_banner
+        if is_synth
+        else f'''<div class="card">
     <h3>Root Cause Classification Confusion Matrix</h3>
     <p>Overall Accuracy: <strong>{confusion_matrix.get("accuracy", 1.0) * 100:.1f}%</strong> |
        Macro F1: <strong>{confusion_matrix.get("macro_f1", 1.0):.4f}</strong></p>
@@ -549,12 +602,17 @@ def generate_html_report(data: dict[str, Any], output_path: Path) -> Path:
         <tr><td>Threshold</td><td>{anomaly.get("threshold", 0.54):.4f}</td></tr>
       </tbody>
     </table>
-  </div>
+  </div>'''
+    }
 
   <h2>6. Top Feature Contributions</h2>
-  <div class="card">
+  {
+        no_data_banner
+        if is_synth
+        else f'''<div class="card">
     {"".join(fi_items)}
-  </div>
+  </div>'''
+    }
 
   <h2>7. Live Accuracy Verification</h2>
   <div class="card">
@@ -566,6 +624,7 @@ def generate_html_report(data: dict[str, Any], output_path: Path) -> Path:
   <h2>8. Fix Effectiveness</h2>
   <div class="card">
     <p>Audit records analyzed (non-dry-run): <strong>{fix_summary.get("total_runs", 0)}</strong></p>
+    {fix_table_html}
     <p>{fix_summary.get("text", "No non-dry-run fixes recorded yet.")}</p>
   </div>
 

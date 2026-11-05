@@ -120,7 +120,7 @@ def test_html_self_contained_and_under_500kb(tmp_path: Path) -> None:
     """Verify HTML export contains no external URLs, has print styles, and stays < 500 KB."""
     html_file = tmp_path / "standalone.html"
     sample_data = {
-        "synthetic": True,
+        "synthetic": False,
         "machine": {"platform": "Windows 11", "cpu_model": "Test CPU", "total_ram_gb": 16},
         "baselines": {},
         "leaderboard": [

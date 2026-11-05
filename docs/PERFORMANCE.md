@@ -55,3 +55,4 @@ Rank  Module                 Cumulative Time  Self Time  Notes
 - Zero heavy dependencies (`pandas`, `scikit-learn`, `numpy`, `matplotlib`) are imported during root CLI initialization.
 - Machine learning libraries are lazy-loaded strictly on demand when `deskflow scan`, `train`, or `watch` are executed.
 - Report generation relies on `report_data.json` loaded via the standard library `json` module, achieving sub-100 ms generation time without heavy ML libraries.
+

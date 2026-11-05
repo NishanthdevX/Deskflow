@@ -2,15 +2,132 @@
 
 This document describes the CLI commands introduced in Deskflow and the structured JSON output schema for automated scripting and integration.
 
-## Commands
+## Primary Commands (v3 Interface)
 
-### `deskflow scan`
+The default `deskflow --help` presents 7 primary commands tailored for immediate device-care and live accuracy verification:
 
-Performs an active system scan, collects live telemetry and performance probes, evaluates trained primary machine learning models, computes a deterministic 0-100 health score, and suggests verified remediation actions.
+### `deskflow battery`
+
+Executes device-care health scan and live accuracy verification on battery power.
 
 ```bash
-deskflow scan [OPTIONS]
+deskflow battery [OPTIONS]
 ```
+
+#### Preflight Checks
+1. Power State Verification: Verifies machine is running on battery power; aborts with exit code `5` if plugged in.
+2. Baseline & Drift: Validates battery baseline exists, is under 7 days old, and within drift threshold (< 20%); prompts for 40s calibration if needed.
+3. Probe Stability: Measures 6 micro-probes and verifies CV < 15%.
+
+#### Options
+- `--quick`: Fast ~25s health scan without waiting for live prediction horizons.
+- `--long`: Extended ~135s check with ~26 resolved prediction pairs.
+- `--fail-on <fair|poor>`: Exit 1 if health score reaches the specified threshold.
+- `--yes`, `-y`: Automatically confirm baseline calibration without prompting.
+- `--json`: Output full structured JSON results.
+- `--plain`: Render pure ASCII without ANSI colors.
+
+---
+
+### `deskflow plugged` (alias `deskflow ac`)
+
+Executes device-care health scan and live accuracy verification on AC wall power.
+
+```bash
+deskflow plugged [OPTIONS]
+# or:
+deskflow ac [OPTIONS]
+```
+
+#### Preflight Checks
+1. Power State Verification: Verifies AC power is connected; aborts with exit code `5` if running on battery.
+2. Baseline & Drift: Validates AC baseline exists, is under 7 days old, and drift is within threshold.
+3. Probe Stability: Measures 6 micro-probes and checks stability.
+
+Shares identical options (`--quick`, `--long`, `--fail-on`, `--yes`, `--json`, `--plain`) with `battery`.
+
+---
+
+### `deskflow full`
+
+Full 10-minute stress test with live accuracy evaluation across every model (stub for Phase 15 release).
+
+---
+
+### `deskflow pipeline`
+
+Animated visual data, model, and inference pipeline running live on current telemetry (stub for Phase 15 release).
+
+---
+
+### `deskflow fix`
+
+Executes safe, user-confirmed remediation actions and measures real-world impact with a post-fix re-scan.
+
+```bash
+deskflow fix [OPTIONS]
+```
+
+---
+
+### `deskflow info`
+
+Fast hardware and operating system summary including CPU, GPU, memory, and disks.
+
+---
+
+### `deskflow tools`
+
+Advanced diagnostic, laboratory, and developer tools. Invoking `deskflow tools` prints the tools catalog with one-line descriptions.
+
+```bash
+deskflow tools [COMMAND]
+```
+
+#### Key Subcommand: `deskflow tools verify`
+Cryptographically verifies all registered model files against SHA-256 hashes in `model_card.json`.
+
+```bash
+deskflow tools verify [--plain]
+```
+
+---
+
+## Exit Codes
+
+| Code | Name | Description |
+|---|---|---|
+| `0` | `EXIT_OK` | Command completed successfully. |
+| `1` | `EXIT_ERROR` | Runtime error, hardware check failure, or `--fail-on` condition met. |
+| `2` | `EXIT_USAGE` | Invalid command line arguments, flags, or durations. |
+| `3` | `EXIT_UNSUPPORTED` | Operating system or architecture is not supported. |
+| `4` | `EXIT_BASELINE_MISSING` | Required baseline for target power state has not been calibrated. |
+| `5` | `EXIT_BLOCKED_OR_DECLINED` | Action declined by user, blocked by safety policy, or power state mismatch. |
+
+> Note: Health status is never encoded in exit codes unless explicitly requested via `--fail-on fair` or `--fail-on poor`.
+
+---
+
+## Compatibility / Advanced Tools (hidden from default `--help`)
+
+All legacy commands remain fully functional and callable directly or via `deskflow tools <cmd>`:
+
+- `deskflow scan`: Instantaneous 14s health scan and model prediction.
+- `deskflow watch`: Live prediction accuracy horizon evaluation.
+- `deskflow check`: Guided 5-step interactive health evaluation.
+- `deskflow report`: Generate verification report across terminal, Markdown, HTML, and JSON.
+- `deskflow prep`: Hardware readiness checklist and calibration.
+- `deskflow baseline`: Manage and calibrate baseline profiles.
+- `deskflow collect`: Record background telemetry datasets.
+- `deskflow dataset`: Build and validate parquet training datasets.
+- `deskflow lab`: Controlled fault injection suite.
+- `deskflow models`: Inspect serialized model registry and metadata.
+- `deskflow doctor`: Platform capabilities and environment health.
+- `deskflow snapshot`: Instantaneous JSON telemetry capture.
+- `deskflow bugreport`: Redacted diagnostic report generator.
+- `deskflow privacy`: Privacy commitments and data directory paths.
+- `deskflow data`: Local disk space utilization inspector.
+- `deskflow uninstall`: Purge local data directories.
 
 #### Options
 

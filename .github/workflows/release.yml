@@ -43,6 +43,22 @@ jobs:
             exit 1
           }
 
+      - name: Verify bundled model provenance for production release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          # Pre-release tags contain a hyphen, e.g. v0.1.0-rc1, v0.1.0-alpha, v0.1.0-dev
+          $isPreRelease = $tag.Contains("-")
+          $cardPath = "src/deskflow/data/models/default/model_card.json"
+          if (Test-Path $cardPath) {
+            $card = Get-Content $cardPath | ConvertFrom-Json
+            if ($card.synthetic -eq $true -and -not $isPreRelease) {
+              Write-Error "Production release ($tag) rejected: bundled model card specifies synthetic: true. Real dataset training required for final releases."
+              exit 1
+            }
+          }
+
       - name: Install dev dependencies
         run: uv sync --locked --python 3.12
 
@@ -52,6 +68,7 @@ jobs:
           uv run ruff format --check .
           uv run mypy src
           uv run pytest
+          uv run deskflow tools verify
 
       - name: Build distributions
         run: uv build

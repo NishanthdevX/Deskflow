@@ -109,6 +109,15 @@ def save_model_set(
         df_test_predictions.to_parquet(pred_parquet_path, index=False, engine="pyarrow")
 
     # 8. Model Card
+    from deskflow.truth import compute_file_sha256, get_git_commit
+
+    models_sha256: dict[str, str] = {}
+    for p in sorted(dest_dir.iterdir()):
+        if p.is_file() and p.name != "model_card.json":
+            models_sha256[p.name] = compute_file_sha256(p)
+
+    git_commit = get_git_commit()
+
     if X_train is not None and training_percentiles is None:
         import numpy as np
 
@@ -146,6 +155,8 @@ def save_model_set(
         "synthetic": synthetic,
         "training_percentiles": training_percentiles or {},
         "created_utc": datetime.now(UTC).isoformat(),
+        "git_commit": git_commit,
+        "models_sha256": models_sha256,
     }
 
     card_path = dest_dir / "model_card.json"

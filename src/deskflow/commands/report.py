@@ -27,6 +27,7 @@ from deskflow.ml.report_data import load_report_data
 from deskflow.paths import get_data_dir
 from deskflow.platform import get_adapter
 from deskflow.report_html import generate_html_report
+from deskflow.truth import NO_REAL_DATA_MESSAGE, load_provenance
 from deskflow.ui.charts import bar_chart_with_whiskers, heatmap, line_chart
 from deskflow.ui.components import bar
 from deskflow.ui.theme import (
@@ -129,6 +130,9 @@ def _collect_fix_effectiveness(
         return 0, {}, "No non-dry-run fixes recorded yet."
 
     tool_stats: dict[str, dict[str, Any]] = {}
+    file_tools = {"clean_temp", "clean_app_caches", "empty_recycle_bin"}
+    app_tools = {"close_idle_apps", "end_heavy_tasks"}
+
     for rec in valid_records:
         before = rec.get("before") or {}
         after = rec.get("after") or {}
@@ -142,21 +146,25 @@ def _collect_fix_effectiveness(
             mem_delta = a_mem - b_mem
 
         for res in rec.get("results", []):
-            tid = res.get("tool_id", "unknown")
+            tid = res.get("tool_id") or res.get("action") or "unknown"
             bytes_freed = float(res.get("bytes_freed") or 0.0)
             if tid not in tool_stats:
                 tool_stats[tid] = {
                     "runs": 0,
                     "bytes_deleted": 0.0,
-                    "score_deltas": [],
+                    "app_memory_closed": 0.0,
                     "mem_deltas": [],
+                    "score_deltas": [],
                 }
             tool_stats[tid]["runs"] += 1
-            tool_stats[tid]["bytes_deleted"] += bytes_freed
-            if score_delta is not None:
-                tool_stats[tid]["score_deltas"].append(score_delta)
+            if tid in file_tools:
+                tool_stats[tid]["bytes_deleted"] += bytes_freed
+            elif tid in app_tools:
+                tool_stats[tid]["app_memory_closed"] += bytes_freed
             if mem_delta is not None:
                 tool_stats[tid]["mem_deltas"].append(mem_delta)
+            if score_delta is not None:
+                tool_stats[tid]["score_deltas"].append(score_delta)
 
     return len(valid_records), tool_stats, f"{len(valid_records)} non-dry-run fix runs recorded."
 
@@ -178,9 +186,11 @@ def generate_report(
         report_data = load_report_data()
         model_dir, _ = resolve_model_dir()
         card = load_model_card(model_dir)
+        prov = load_provenance(model_dir)
     except Exception:
         report_data = {}
         card = {}
+        prov = load_provenance()
 
     is_synth = bool(report_data.get("synthetic", card.get("synthetic", True)))
     synth_banner = "DEMO MODEL (SYNTHETIC DATA - NOT A REAL WORLD RESULT)"
@@ -237,20 +247,20 @@ def generate_report(
     n_fixes, fix_stats, fix_msg = _collect_fix_effectiveness(data_dir / "fixlog.jsonl")
 
     # Limitations
-    limitations = [
-        f"Evaluated on single hardware host ({machine_dict['cpu_model']}, "
-        f"{machine_dict['total_ram_gb']} GB RAM).",
-        "Power states calibrated: "
-        + (", ".join(st.upper() for st in base_dict) if base_dict else "None."),
-        (
-            "Trained entirely on synthetic simulation data; benchmark metrics do not "
-            "represent organic multi-user workloads."
-            if is_synth
-            else "Trained on organic multi-session dataset."
-        ),
-        "Probe telemetry measures CPU, RAM, and storage latency; GPU workloads are unmonitored.",
-        "Scenarios producing near-zero probe slowdown in simulation: idle, lightweight background.",
-    ]
+    if is_synth:
+        limitations = [NO_REAL_DATA_MESSAGE]
+    else:
+        limitations = [
+            f"Evaluated on single hardware host ({machine_dict['cpu_model']}, "
+            f"{machine_dict['total_ram_gb']} GB RAM).",
+            "Power states calibrated: "
+            + (", ".join(st.upper() for st in base_dict) if base_dict else "None."),
+            (
+                f"Trained on organic multi-session dataset "
+                f"({prov.train_rows + prov.test_rows:,} rows in {prov.sessions_count} sessions)."
+            ),
+            "Probe measures CPU, RAM, and storage latency; GPU workloads are unmonitored.",
+        ]
 
     # Combine into full report dictionary
     full_report: dict[str, Any] = {
@@ -349,124 +359,178 @@ def generate_report(
 
     # 3. OFFLINE LEADERBOARD
     console.print("\n[bold cyan]3. [ OFFLINE LEADERBOARD ][/bold cyan]")
-    leaderboard = report_data.get("leaderboard", [])
-    if leaderboard:
-        # Whisker chart
-        rows_whisker = [
-            (
-                r["model"],
-                r["mae"],
-                r["mae_ci"][0],
-                r["mae_ci"][1],
-                r["is_baseline"],
+    if is_synth:
+        console.print(
+            Panel(
+                f"[bold yellow]{NO_REAL_DATA_MESSAGE}[/bold yellow]",
+                border_style="yellow",
+                box=box_style,
             )
-            for r in leaderboard
-        ]
-        console.print(bar_chart_with_whiskers(rows_whisker, metric_label="MAE", plain=plain))
+        )
+    else:
+        leaderboard = report_data.get("leaderboard", [])
+        if leaderboard:
+            # Whisker chart
+            rows_whisker = [
+                (
+                    r["model"],
+                    r["mae"],
+                    r["mae_ci"][0],
+                    r["mae_ci"][1],
+                    r["is_baseline"],
+                )
+                for r in leaderboard
+            ]
+            console.print(bar_chart_with_whiskers(rows_whisker, metric_label="MAE", plain=plain))
 
-        # Metrics table
-        t_lead = Table(box=box_style, expand=True)
-        t_lead.add_column("Model", style="bold")
-        t_lead.add_column("MAE", justify="right")
-        t_lead.add_column("95% CI", justify="right")
-        t_lead.add_column("RMSE", justify="right")
-        t_lead.add_column("R2 Score", justify="right")
-        t_lead.add_column("Tol Acc", justify="right")
-        t_lead.add_column("Beats Persistence", justify="center")
+            # Metrics table
+            t_lead = Table(box=box_style, expand=True)
+            t_lead.add_column("Model", style="bold")
+            t_lead.add_column("MAE", justify="right")
+            t_lead.add_column("95% CI", justify="right")
+            t_lead.add_column("RMSE", justify="right")
+            t_lead.add_column("R2 Score", justify="right")
+            t_lead.add_column("Tol Acc", justify="right")
+            t_lead.add_column("Beats Persistence", justify="center")
 
-        for r in leaderboard:
-            is_base = r.get("is_baseline", False)
-            beats = r.get("beats_persistence", False)
-            if is_base:
-                beats_str = Text("-", style="dim")
-            elif beats:
-                beats_str = Text("YES", style=COLOR_GREEN) if not plain else Text("YES")
-            else:
-                beats_str = Text("NO", style=COLOR_RED) if not plain else Text("NO")
+            for r in leaderboard:
+                is_base = r.get("is_baseline", False)
+                beats = r.get("beats_persistence", False)
+                if is_base:
+                    beats_str = Text("-", style="dim")
+                elif beats:
+                    beats_str = Text("YES", style=COLOR_GREEN) if not plain else Text("YES")
+                else:
+                    beats_str = Text("NO", style=COLOR_RED) if not plain else Text("NO")
 
-            model_txt = Text(r["model"], style="dim") if is_base else Text(r["model"])
-            t_lead.add_row(
-                model_txt,
-                f"{r['mae']:.4f}",
-                f"[{r['mae_ci'][0]:.4f}, {r['mae_ci'][1]:.4f}]",
-                f"{r['rmse']:.4f}",
-                f"{r['r2']:.4f}",
-                f"{r['tolerance_accuracy'] * 100:.1f}%",
-                beats_str,
-            )
-        console.print(t_lead)
+                model_txt = Text(r["model"], style="dim") if is_base else Text(r["model"])
+                t_lead.add_row(
+                    model_txt,
+                    f"{r['mae']:.4f}",
+                    f"[{r['mae_ci'][0]:.4f}, {r['mae_ci'][1]:.4f}]",
+                    f"{r['rmse']:.4f}",
+                    f"{r['r2']:.4f}",
+                    f"{r['tolerance_accuracy'] * 100:.1f}%",
+                    beats_str,
+                )
+            console.print(t_lead)
 
     # 4. PREDICTED VS ACTUAL
     console.print("\n[bold cyan]4. [ PREDICTED VS ACTUAL ][/bold cyan]")
-    ts_pts = report_data.get("time_series", [])
-    if ts_pts:
-        act_pts = [p["actual"] for p in ts_pts]
-        pred_pts = [p["predicted"] for p in ts_pts]
+    if is_synth:
         console.print(
-            line_chart(
-                actual=act_pts,
-                predicted=pred_pts,
-                title="PREDICTED VS ACTUAL",
-                height=8,
-                width=56,
-                plain=plain,
+            Panel(
+                f"[bold yellow]{NO_REAL_DATA_MESSAGE}[/bold yellow]",
+                border_style="yellow",
+                box=box_style,
             )
         )
+    else:
+        ts_pts = report_data.get("time_series", [])
+        if ts_pts:
+            act_pts = [p["actual"] for p in ts_pts]
+            pred_pts = [p["predicted"] for p in ts_pts]
+            console.print(
+                line_chart(
+                    actual=act_pts,
+                    predicted=pred_pts,
+                    title="PREDICTED VS ACTUAL",
+                    height=8,
+                    width=56,
+                    plain=plain,
+                )
+            )
 
     # 5. BREAKDOWNS
     console.print("\n[bold cyan]5. [ BREAKDOWNS ][/bold cyan]")
-    sc_break = report_data.get("scenario_breakdown", {})
-    if sc_break:
-        t_sc = Table(title="Scenario MAE Breakdown", box=box_style, expand=True)
-        t_sc.add_column("Scenario", style="bold")
-        for m in ["XGBoost", "RandomForest", "Ridge", "Persistence"]:
-            t_sc.add_column(m, justify="right")
-        models_order = ["XGBoost", "RandomForest", "Ridge", "Persistence"]
-        for sc, sc_dict in sc_break.items():
-            cells = [f"{sc_dict.get(m, 0.0):.4f}" for m in models_order]
-            t_sc.add_row(sc, *cells)
-        console.print(t_sc)
+    if is_synth:
+        console.print(
+            Panel(
+                f"[bold yellow]{NO_REAL_DATA_MESSAGE}[/bold yellow]",
+                border_style="yellow",
+                box=box_style,
+            )
+        )
+    else:
+        sc_break = report_data.get("scenario_breakdown", {})
+        if sc_break:
+            t_sc = Table(title="Scenario MAE Breakdown", box=box_style, expand=True)
+            t_sc.add_column("Scenario", style="bold")
+            for m in ["XGBoost", "RandomForest", "Ridge", "Persistence"]:
+                t_sc.add_column(m, justify="right")
+            models_order = ["XGBoost", "RandomForest", "Ridge", "Persistence"]
+            for sc, sc_dict in sc_break.items():
+                cells = [f"{sc_dict.get(m, 0.0):.4f}" for m in models_order]
+                t_sc.add_row(sc, *cells)
+            console.print(t_sc)
 
     # 6. CONFUSION MATRIX
     console.print("\n[bold cyan]6. [ CONFUSION MATRIX ][/bold cyan]")
-    cm_data = report_data.get("confusion_matrix", {})
-    if cm_data and cm_data.get("matrix"):
+    if is_synth:
         console.print(
-            heatmap(
-                labels=cm_data.get("classes", []),
-                matrix=cm_data.get("matrix", []),
-                title="ROOT CAUSE CLASSIFICATION",
-                plain=plain,
+            Panel(
+                f"[bold yellow]{NO_REAL_DATA_MESSAGE}[/bold yellow]",
+                border_style="yellow",
+                box=box_style,
             )
         )
-        acc = cm_data.get("accuracy", 1.0) * 100.0
-        f1 = cm_data.get("macro_f1", 1.0)
-        console.print(f"[dim]Overall Accuracy: {acc:.1f}% | Macro F1: {f1:.4f}[/dim]")
+    else:
+        cm_data = report_data.get("confusion_matrix", {})
+        if cm_data and cm_data.get("matrix"):
+            console.print(
+                heatmap(
+                    labels=cm_data.get("classes", []),
+                    matrix=cm_data.get("matrix", []),
+                    title="ROOT CAUSE CLASSIFICATION",
+                    plain=plain,
+                )
+            )
+            acc = cm_data.get("accuracy", 1.0) * 100.0
+            f1 = cm_data.get("macro_f1", 1.0)
+            console.print(f"[dim]Overall Accuracy: {acc:.1f}% | Macro F1: {f1:.4f}[/dim]")
 
     # 7. FEATURE IMPORTANCE
     console.print("\n[bold cyan]7. [ FEATURE IMPORTANCE ][/bold cyan]")
-    fi_list = report_data.get("feature_importance", [])[:10]
-    if fi_list:
-        t_fi = Table(box=box_style, expand=True)
-        t_fi.add_column("Feature", style="bold")
-        t_fi.add_column("Weight", justify="right")
-        t_fi.add_column("Contribution Bar", justify="left")
-        for f in fi_list:
-            f_bar = bar(f.get("normalized", 0.0), 1.0, width=20, plain=plain)
-            t_fi.add_row(f.get("name", ""), f"{f.get('weight', 0.0):.4f}", f_bar)
-        console.print(t_fi)
+    if is_synth:
+        console.print(
+            Panel(
+                f"[bold yellow]{NO_REAL_DATA_MESSAGE}[/bold yellow]",
+                border_style="yellow",
+                box=box_style,
+            )
+        )
+    else:
+        fi_list = report_data.get("feature_importance", [])[:10]
+        if fi_list:
+            t_fi = Table(box=box_style, expand=True)
+            t_fi.add_column("Feature", style="bold")
+            t_fi.add_column("Weight", justify="right")
+            t_fi.add_column("Contribution Bar", justify="left")
+            for f in fi_list:
+                f_bar = bar(f.get("normalized", 0.0), 1.0, width=20, plain=plain)
+                t_fi.add_row(f.get("name", ""), f"{f.get('weight', 0.0):.4f}", f_bar)
+            console.print(t_fi)
 
     # 8. ANOMALY DETECTOR
     console.print("\n[bold cyan]8. [ ANOMALY DETECTOR ][/bold cyan]")
-    anom = report_data.get("anomaly", {})
-    t_anom = Table(box=box_style, expand=True)
-    t_anom.add_column("Metric", style="bold")
-    t_anom.add_column("Value", justify="right")
-    t_anom.add_row("ROC-AUC", f"{anom.get('roc_auc', 1.0):.4f}")
-    t_anom.add_row("Recall (anomalies)", f"{anom.get('recall', 1.0):.4f}")
-    t_anom.add_row("False Alarm Rate (healthy)", f"{anom.get('false_alarm_rate', 0.02):.4f}")
-    t_anom.add_row("Threshold", f"{anom.get('threshold', 0.54):.4f}")
-    console.print(t_anom)
+    if is_synth:
+        console.print(
+            Panel(
+                f"[bold yellow]{NO_REAL_DATA_MESSAGE}[/bold yellow]",
+                border_style="yellow",
+                box=box_style,
+            )
+        )
+    else:
+        anom = report_data.get("anomaly", {})
+        t_anom = Table(box=box_style, expand=True)
+        t_anom.add_column("Metric", style="bold")
+        t_anom.add_column("Value", justify="right")
+        t_anom.add_row("ROC-AUC", f"{anom.get('roc_auc', 1.0):.4f}")
+        t_anom.add_row("Recall (anomalies)", f"{anom.get('recall', 1.0):.4f}")
+        t_anom.add_row("False Alarm Rate (healthy)", f"{anom.get('false_alarm_rate', 0.02):.4f}")
+        t_anom.add_row("Threshold", f"{anom.get('threshold', 0.54):.4f}")
+        console.print(t_anom)
 
     # 9. LIVE ACCURACY
     console.print("\n[bold cyan]9. [ LIVE ACCURACY ][/bold cyan]")
@@ -492,10 +556,24 @@ def generate_report(
         t_fx = Table(box=box_style, expand=True)
         t_fx.add_column("Remediation Tool", style="bold")
         t_fx.add_column("Executed Runs", justify="right")
-        t_fx.add_column("Bytes Deleted", justify="right")
+        t_fx.add_column("File Bytes Deleted", justify="right")
+        t_fx.add_column("Memory of Closed Apps", justify="right")
+        t_fx.add_column("Available Memory Change", justify="right")
+        file_tools = {"clean_temp", "clean_app_caches", "empty_recycle_bin"}
+        app_tools = {"close_idle_apps", "end_heavy_tasks"}
         for tid, t_stat in fix_stats.items():
-            b_del = f"{t_stat['bytes_deleted'] / (1024**2):.1f} MB"
-            t_fx.add_row(tid, str(t_stat["runs"]), b_del)
+            b_del = f"{t_stat['bytes_deleted'] / (1024**2):.1f} MB" if tid in file_tools else "-"
+            m_closed = (
+                f"{t_stat.get('app_memory_closed', 0.0) / (1024**2):.1f} MB"
+                if tid in app_tools
+                else "-"
+            )
+            if t_stat.get("mem_deltas"):
+                avg_m = sum(t_stat["mem_deltas"]) / len(t_stat["mem_deltas"]) / (1024**2)
+                avail_change = f"{avg_m:+.1f} MB"
+            else:
+                avail_change = "-"
+            t_fx.add_row(tid, str(t_stat["runs"]), b_del, m_closed, avail_change)
         console.print(t_fx)
     else:
         console.print(f"[dim]{fix_msg}[/dim]")
@@ -505,6 +583,7 @@ def generate_report(
     for lim in limitations:
         console.print(f"- {lim}")
 
+    console.print(f"\n[dim]{prov.footer_string()}[/dim]")
     console.print()
     return full_report
 
@@ -571,21 +650,34 @@ def _write_markdown_report(data: dict[str, Any], output_path: Path) -> None:
             lines.append(f"| {st.upper()} | Not calibrated | - | - | - |")
     lines.append("")
 
-    lines.extend(
-        [
-            "## 2. Offline Model Leaderboard",
-            "",
-            "| Model | MAE | 95% Bootstrap CI | RMSE | R2 | Tol Acc | Beats Persistence |",
-            "| :--- | :---: | :---: | :---: | :---: | :---: | :---: |",
-        ]
-    )
-    for r in data.get("leaderboard", []):
-        beats = "YES" if r.get("beats_persistence") else ("-" if r.get("is_baseline") else "NO")
-        lines.append(
-            f"| {r['model']} | {r['mae']:.4f} | [{r['mae_ci'][0]:.4f}, {r['mae_ci'][1]:.4f}] | "
-            f"{r['rmse']:.4f} | {r['r2']:.4f} | {r['tolerance_accuracy'] * 100:.1f}% | {beats} |"
+    if data.get("synthetic"):
+        lines.extend(
+            [
+                "## 2. Offline Model Leaderboard",
+                "",
+                "> [!NOTE]",
+                f"> {NO_REAL_DATA_MESSAGE}",
+                "",
+            ]
         )
-    lines.append("")
+    else:
+        lines.extend(
+            [
+                "## 2. Offline Model Leaderboard",
+                "",
+                "| Model | MAE | 95% Bootstrap CI | RMSE | R2 | Tol Acc | Beats Persistence |",
+                "| :--- | :---: | :---: | :---: | :---: | :---: | :---: |",
+            ]
+        )
+        for r in data.get("leaderboard", []):
+            beats = "YES" if r.get("beats_persistence") else ("-" if r.get("is_baseline") else "NO")
+            ci_str = f"[{r['mae_ci'][0]:.4f}, {r['mae_ci'][1]:.4f}]"
+            tol_str = f"{r['tolerance_accuracy'] * 100:.1f}%"
+            lines.append(
+                f"| {r['model']} | {r['mae']:.4f} | {ci_str} | "
+                f"{r['rmse']:.4f} | {r['r2']:.4f} | {tol_str} | {beats} |"
+            )
+        lines.append("")
 
     lines.extend(
         [

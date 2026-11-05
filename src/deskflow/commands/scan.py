@@ -26,6 +26,10 @@ from deskflow.collector.models import ProcessSample, Record
 from deskflow.collector.probe import run_probe
 from deskflow.collector.sampler import Sampler
 from deskflow.collector.storage import StorageScanner
+from deskflow.exit_codes import (
+    EXIT_BLOCKED_OR_DECLINED,
+    EXIT_ERROR,
+)
 from deskflow.features.extract import build_row
 from deskflow.features.registry import DEFAULT_HORIZON_S, FEATURE_MAP
 from deskflow.health.score import compute_health_score
@@ -73,6 +77,11 @@ def scan_command(
         help="Automatically confirm any required baseline calibration.",
     ),
     plain: bool = typer.Option(False, "--plain"),
+    fail_on: str | None = typer.Option(
+        None,
+        "--fail-on",
+        help="Exit with code 1 if health rating matches or is worse than fair or poor.",
+    ),
 ) -> None:
     """Run an end-to-end device scan, evaluate health score, and recommend fixes."""
     import numpy as np
@@ -101,7 +110,7 @@ def scan_command(
             )
             if not confirmed:
                 console.print("[red]Scan aborted: baseline required.[/red]")
-                raise typer.Exit(code=1)
+                raise typer.Exit(code=EXIT_BLOCKED_OR_DECLINED)
         if not output_json:
             console.print("[cyan]Running baseline calibration...[/cyan]")
         baseline = calibrate_baseline(
@@ -533,6 +542,13 @@ def scan_command(
             },
         }
         print(json.dumps(result_payload, indent=2))
+        if fail_on:
+            thresh = fail_on.strip().lower()
+            lbl = health_label.strip().lower()
+            if thresh == "fair" and lbl in ("fair", "poor"):
+                raise typer.Exit(code=EXIT_ERROR)
+            if thresh == "poor" and lbl == "poor":
+                raise typer.Exit(code=EXIT_ERROR)
         return
 
     # 7. Human-readable CLI Output
@@ -715,3 +731,11 @@ def scan_command(
             f"Model Load {model_load_s:.2f}s | Inference {infer_s:.4f}s | Total {total_s:.2f}s"
         )
         console.print(f"[dim]Timings: {t_str}[/dim]")
+
+    if fail_on:
+        thresh = fail_on.strip().lower()
+        lbl = health_label.strip().lower()
+        if thresh == "fair" and lbl in ("fair", "poor"):
+            raise typer.Exit(code=EXIT_ERROR)
+        if thresh == "poor" and lbl == "poor":
+            raise typer.Exit(code=EXIT_ERROR)

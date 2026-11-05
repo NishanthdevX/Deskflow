@@ -22,9 +22,9 @@ def test_help_exits_zero() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "Usage" in result.output
-    assert "snapshot" in result.output
-    assert "collect" in result.output
-    assert "doctor" in result.output
+    assert "battery" in result.output
+    assert "plugged" in result.output
+    assert "tools" in result.output
 
 
 def test_snapshot_json_output() -> None:

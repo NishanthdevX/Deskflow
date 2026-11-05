@@ -43,3 +43,4 @@ To configure PyPI Trusted Publishing for Deskflow:
    ```
 3. Create a GitHub Release referencing the tag.
 4. When `PUBLISH_TO_PYPI` is set to `"true"`, GitHub Actions builds the wheel and sdist, verifies hashes, and uploads the distribution directly to PyPI using short-lived OIDC tokens.
+

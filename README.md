@@ -23,35 +23,40 @@ These scripts verify `uv`, download the release wheel and cryptographic `SHA256S
 ## 2. Quick Start
 
 - `deskflow`: Opens the interactive terminal launcher dashboard.
-- `deskflow check`: Executes a guided 5-step health evaluation (info, scan, fix inventory, live accuracy watch, and summary report with HTML export).
-- `deskflow scan`: Runs a fast 14-second device health scan, computes health score (0-100), and outputs predicted slowdown.
-- `deskflow fix --list`: Displays the Fix Center tools inventory and cleanable bytes.
+- `deskflow battery`: Runs preflight, health scan, and live prediction verification on battery power.
+- `deskflow plugged` (alias `deskflow ac`): Runs preflight, health scan, and live prediction verification on AC power.
+- `deskflow fix`: Inspects Fix Center tools and executes safe, verified remediations.
 - `deskflow info`: Displays high-density host specifications, DPI-aware display resolution, and volume usage.
+- `deskflow tools`: Advanced diagnostic, laboratory, and verification tools catalog.
+- `deskflow tools verify`: Cryptographically verifies model artifacts against `model_card.json` checksums.
 
 ---
 
-## 3. Command Reference
+## 3. Command Surface (v3)
+
+Primary commands visible in default help:
 
 | Command | Summary | Description |
 | :--- | :--- | :--- |
-| `deskflow check` | Guided full check | 5-step workflow: Info -> Scan -> Fix Center -> Live Watch -> Summary Report. |
-| `deskflow scan` | Quick health scan | Samples 13s telemetry, runs probe, evaluates ML models, and scores health. |
+| `deskflow battery` | Battery check | Preflight validation, health scan, and live accuracy verification on battery. |
+| `deskflow plugged` | Plugged-in check | Same as battery check, verified on AC wall power (alias: `deskflow ac`). |
+| `deskflow full` | Full scan (stub) | Stress test with live accuracy of every model (coming Phase 15). |
+| `deskflow pipeline` | Pipeline (stub) | Animated live data, model, and inference pipeline (coming Phase 15). |
 | `deskflow fix` | Fix Center | Safe, confirmed remediation actions with before/after re-measurement. |
 | `deskflow info` | System info | High-density hardware, GPU, DPI-aware resolution, and disk breakdown. |
-| `deskflow watch` | Live accuracy watch | Compares live predictions at time $t$ against probe latency measured at $t+20\text{s}$. |
-| `deskflow report` | Verification report | Renders 11 terminal sections, Markdown, JSON, and standalone HTML with SVGs. |
-| `deskflow prep` | Readiness checklist | Verifies power states, baselines, and models for demonstrations. |
-| `deskflow doctor` | Health diagnostics | Checks host platform capabilities, permissions, and baseline status. |
-| `deskflow snapshot`| Quick snapshot | Takes a 1-second telemetry sample and inline micro-benchmark probe. |
-| `deskflow baseline`| Baseline calibration| Calibrates and manages idle hardware latency baselines per power state. |
-| `deskflow lab` | Fault injection | Controlled synthetic workloads under safety watchdog supervision. |
-| `deskflow dataset` | Dataset engineering | Builds, validates, and merges feature datasets from raw telemetry runs. |
-| `deskflow models` | Model management | Inspects trained model sets, hyperparameters, and active pointers. |
-| `deskflow train` | Model training | Trains regression, classification, and anomaly models on engineered datasets. |
-| `deskflow bugreport`| Sanitize bug report | Generates local Markdown report with personal paths and IDs redacted. |
-| `deskflow privacy` | Privacy policy | Displays offline data storage policies and local directory paths. |
-| `deskflow data` | Storage usage | Inspects local disk space consumed by telemetry, baselines, and models. |
-| `deskflow uninstall`| Data removal | Purges local Deskflow configuration and history after typed confirmation. |
+| `deskflow tools` | Advanced tools | Developer, laboratory, dataset, and diagnostic tools catalog. |
+
+All legacy commands (`scan`, `watch`, `check`, `report`, `prep`, `baseline`, `collect`, `dataset`, `lab`, `models`, `train`, `doctor`, `snapshot`, `bugreport`, `privacy`, `data`, `uninstall`) remain fully functional directly and through `deskflow tools <command>`.
+
+---
+
+## 4. Truth Contract Guarantee
+
+Deskflow enforces a strict truth contract between ML models and user-facing metrics:
+- **Synthetic Data Transparency**: When bundled or active models are trained on synthetic data (`synthetic: true` in `model_card.json`), user-facing views (`scan`, `battery`, `plugged`, `report`) strictly suppress all synthetic accuracy numbers (MAE, $R^2$, $F_1$, confusion matrices, feature weights).
+- **Truth Banner**: In place of synthetic metrics, Deskflow displays:
+  > **NO REAL DATA YET**: this model was trained on synthetic data. Run deskflow full to measure real accuracy on this machine.
+- **Model Integrity Verification**: `deskflow tools verify` audits on-disk model artifacts against SHA-256 digests in `model_card.json`. Production releases are guarded to prevent non-pre-release releases containing synthetic models.
 
 ---
 

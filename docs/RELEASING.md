@@ -55,3 +55,4 @@ All changes are documented in `CHANGELOG.md` following [Keep a Changelog](https:
 5. **PyPI Deployment**:
    - To deploy to PyPI, set repository variable `PUBLISH_TO_PYPI = "true"` and publish the release.
    - Trusted Publishing executes via `.github/workflows/pypi.yml`.
+

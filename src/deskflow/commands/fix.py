@@ -723,6 +723,7 @@ def fix_command(
     if dry_run:
         results_log = [
             {
+                "tool_id": r.action,
                 "action": r.action,
                 "success": r.success,
                 "message": r.message,
@@ -750,6 +751,7 @@ def fix_command(
     else:
         results_log = [
             {
+                "tool_id": r.action,
                 "action": r.action,
                 "success": r.success,
                 "message": r.message,

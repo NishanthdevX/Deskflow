@@ -18,11 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Probe repeat diagnostics, probe warm-up settings stored with baselines, and direct module entry point.
-- Storage scan audit counters, shared terminal UI helpers, and a safe Tkinter demonstration workload.
-
-### Changed
-- Temporary cleanup recommendations now require 100 MiB of measured cleanable data.
+- Phase 14 Five-Command Interface v3 (`battery`, `plugged`, `full`, `fix`, `pipeline`, `info`, and `tools`).
+- Hardware preflight checks in `deskflow battery` and `deskflow plugged`: verifies matching power state (aborts with code `5` if mismatched), checks baseline age and drift (prompts for 40s calibration), and executes a 6-probe stability check.
+- Truth contract (`src/deskflow/truth.py`): tracks `ModelProvenance` loaded from `model_card.json` (`synthetic`, `dataset_hash`, `train_rows`, `test_rows`, `sessions_count`, `machines_count`, `power_states`, `git_commit`, `model_hashes`).
+- Truth banner enforcement: suppresses synthetic accuracy metrics across `scan`, `battery`, `plugged`, and `report`, displaying `"NO REAL DATA YET: this model was trained on synthetic data. Run deskflow full to measure real accuracy on this machine."`
+- `deskflow tools verify`: cryptographically verifies all serialized model artifacts against card SHA-256 hashes.
+- `release.yml` release gate: validates that production tags do not contain `synthetic: true` model bundles.
+- Standardized exit codes (`0` ok, `1` error/fail-on, `2` usage, `3` unsupported, `4` baseline missing, `5` declined/blocked/wrong power state).
+- Flag `--fail-on <fair|poor>` on scan and power checks.
+- Audit fixlog records `tool_id` to prevent `"unknown"` entries.
+- Report Fix Effectiveness table splits file bytes deleted and closed application memory into dedicated columns.
 
 ## [0.1.0.dev3] - 2026-11-01
 
