@@ -74,9 +74,14 @@ else
         curl -fsSL "${SUMS_URL}" -o "${CACHED_SUMS}" || true
 
         echo "Downloading Deskflow v${VERSION} wheel..."
-        curl -fsSL "${WHEEL_URL}" -o "${CACHED_WHEEL}"
+        if ! curl -fsSL "${WHEEL_URL}" -o "${CACHED_WHEEL}"; then
+            echo "Pre-built release wheel for v${VERSION} not found on GitHub Releases."
+            echo "Falling back to running directly from GitHub repository via uv..."
+            WHEEL_SOURCE="git+https://github.com/${REPO}.git"
+            rm -f "${CACHED_WHEEL}"
+        fi
 
-        if [ -f "${CACHED_SUMS}" ]; then
+        if [ "${WHEEL_SOURCE}" = "${CACHED_WHEEL}" ] && [ -f "${CACHED_SUMS}" ]; then
             EXPECTED_HASH=$(grep "${WHEEL_FILE_NAME}" "${CACHED_SUMS}" | awk '{print $1}' || true)
             if [ -n "${EXPECTED_HASH}" ]; then
                 if command -v shasum >/dev/null 2>&1; then

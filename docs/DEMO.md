@@ -226,3 +226,4 @@ Before starting the live demonstration:
 2. Calibrate hardware baseline if older than 7 days: `uv run deskflow prep --calibrate`.
 3. Verify test suite and self-test pass cleanly: `uv run deskflow tools selftest --plain`.
 4. Maximize terminal window to at least 100 columns by 30 rows.
+

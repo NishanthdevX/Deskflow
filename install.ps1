@@ -82,10 +82,17 @@ if ($LocalWheel -and (Test-Path $LocalWheel)) {
         }
 
         Write-Host "Downloading Deskflow v$Version wheel..."
-        Invoke-WebRequest -Uri $WheelUrl -OutFile $CachedWheel -UseBasicParsing
+        try {
+            Invoke-WebRequest -Uri $WheelUrl -OutFile $CachedWheel -UseBasicParsing
+        } catch {
+            Write-Warning "Pre-built release wheel for v$Version not found on GitHub Releases."
+            Write-Host "Falling back to running directly from GitHub repository via uv..."
+            $WheelSource = "git+https://github.com/$Repo.git"
+            $NeedDownload = $false
+        }
 
         # Verify hash
-        if (Test-Path $CachedSums) {
+        if ($WheelSource -eq $CachedWheel -and (Test-Path $CachedSums)) {
             $ExpectedLine = Get-Content $CachedSums | Where-Object { $_ -match $WheelFileName }
             if ($ExpectedLine) {
                 $ExpectedHash = ($ExpectedLine -split '\s+')[0].Trim().ToLower()
