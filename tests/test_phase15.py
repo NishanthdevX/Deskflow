@@ -133,7 +133,9 @@ def test_pipeline_static_frame_rendering() -> None:
 
 def test_full_scan_quick_test(tmp_path: Path) -> None:
     """Verify full scan execution in quick_test mode and session artifact saving."""
+    from unittest.mock import MagicMock
     from deskflow.baseline import Baseline
+    from deskflow.platform.base import BatteryInfo
 
     dummy_b = Baseline(
         machine_id="test",
@@ -150,7 +152,11 @@ def test_full_scan_quick_test(tmp_path: Path) -> None:
         power_state="ac",
     )
 
+    mock_adapter = MagicMock()
+    mock_adapter.battery.return_value = BatteryInfo(percent=100.0, plugged_in=True)
+
     with (
+        patch("deskflow.commands.full.get_adapter", return_value=mock_adapter),
         patch("deskflow.commands.full.load_baseline", return_value=dummy_b),
         patch("deskflow.commands.full.get_data_dir", return_value=tmp_path),
     ):
