@@ -134,6 +134,7 @@ def test_pipeline_static_frame_rendering() -> None:
 def test_full_scan_quick_test(tmp_path: Path) -> None:
     """Verify full scan execution in quick_test mode and session artifact saving."""
     from unittest.mock import MagicMock
+
     from deskflow.baseline import Baseline
     from deskflow.platform.base import BatteryInfo
 
