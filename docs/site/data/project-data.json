@@ -1,0 +1,395 @@
+{
+  "status": "ok",
+  "synthetic": false,
+  "dataset_sha256": "61af1146ea1afcc9069a86bec29658028193fef1cd520520f2bd0e54936daf7f",
+  "train_rows": 1457,
+  "test_rows": 500,
+  "sessions": 6,
+  "machines": 1,
+  "power_states": [
+    "ac",
+    "battery"
+  ],
+  "created": "2026-11-05T06:47:58.266212+00:00",
+  "git_commit": "b64594768037410fff25d2d8026861fc685bdb5e",
+  "version": "0.1.0",
+  "regression": [
+    {
+      "name": "XGBoost",
+      "mae": 0.0008,
+      "ci": [
+        0.0007,
+        0.0008
+      ],
+      "baseline": false
+    },
+    {
+      "name": "RandomForest",
+      "mae": 0.0011,
+      "ci": [
+        0.001,
+        0.0012
+      ],
+      "baseline": false
+    },
+    {
+      "name": "Ridge",
+      "mae": 0.0076,
+      "ci": [
+        0.007,
+        0.0082
+      ],
+      "baseline": false
+    },
+    {
+      "name": "RollingMean",
+      "mae": 0.0186,
+      "ci": [
+        0.0175,
+        0.0199
+      ],
+      "baseline": true
+    },
+    {
+      "name": "Persistence",
+      "mae": 0.0246,
+      "ci": [
+        0.0231,
+        0.0264
+      ],
+      "baseline": true
+    }
+  ],
+  "classification": {
+    "Dummy": {
+      "accuracy": 0.208,
+      "balanced_accuracy": 0.2,
+      "macro_f1": 0.0689,
+      "per_class": {
+        "healthy": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 104
+        },
+        "cpu_pressure": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 104
+        },
+        "memory_pressure": {
+          "precision": 0.208,
+          "recall": 1.0,
+          "f1": 0.3444,
+          "support": 104
+        },
+        "disk_pressure": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 104
+        },
+        "background_load": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 84
+        }
+      },
+      "confusion_matrix": [
+        [
+          0,
+          0,
+          104,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          104,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          104,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          104,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          84,
+          0,
+          0
+        ]
+      ],
+      "classes": [
+        "healthy",
+        "cpu_pressure",
+        "memory_pressure",
+        "disk_pressure",
+        "background_load"
+      ]
+    },
+    "LogisticRegression": {
+      "accuracy": 1.0,
+      "balanced_accuracy": 1.0,
+      "macro_f1": 1.0,
+      "per_class": {
+        "healthy": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 104
+        },
+        "cpu_pressure": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 104
+        },
+        "memory_pressure": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 104
+        },
+        "disk_pressure": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 104
+        },
+        "background_load": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 84
+        }
+      },
+      "confusion_matrix": [
+        [
+          104,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          104,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          104,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          104,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          84
+        ]
+      ],
+      "classes": [
+        "healthy",
+        "cpu_pressure",
+        "memory_pressure",
+        "disk_pressure",
+        "background_load"
+      ]
+    },
+    "RandomForest": {
+      "accuracy": 1.0,
+      "balanced_accuracy": 1.0,
+      "macro_f1": 1.0,
+      "per_class": {
+        "healthy": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 104
+        },
+        "cpu_pressure": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 104
+        },
+        "memory_pressure": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 104
+        },
+        "disk_pressure": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 104
+        },
+        "background_load": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 84
+        }
+      },
+      "confusion_matrix": [
+        [
+          104,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          104,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          104,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          104,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          84
+        ]
+      ],
+      "classes": [
+        "healthy",
+        "cpu_pressure",
+        "memory_pressure",
+        "disk_pressure",
+        "background_load"
+      ]
+    },
+    "XGBoost": {
+      "accuracy": 1.0,
+      "balanced_accuracy": 1.0,
+      "macro_f1": 1.0,
+      "per_class": {
+        "healthy": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 104
+        },
+        "cpu_pressure": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 104
+        },
+        "memory_pressure": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 104
+        },
+        "disk_pressure": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 104
+        },
+        "background_load": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 84
+        }
+      },
+      "confusion_matrix": [
+        [
+          104,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          104,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          104,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          104,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          84
+        ]
+      ],
+      "classes": [
+        "healthy",
+        "cpu_pressure",
+        "memory_pressure",
+        "disk_pressure",
+        "background_load"
+      ]
+    }
+  },
+  "anomaly": {
+    "roc_auc": 1.0,
+    "false_alarm_rate": 0.0192,
+    "recall": 1.0,
+    "threshold": 0.6009
+  }
+}

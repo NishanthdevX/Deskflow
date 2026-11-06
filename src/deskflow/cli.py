@@ -287,6 +287,7 @@ def scan(
         14,
         "--seconds",
         "-s",
+        min=13,
         help="Measuring duration in seconds (default 14, min 13).",
     ),
     json: bool = typer.Option(
@@ -521,8 +522,9 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
-@app.callback()
+@app.callback(invoke_without_command=True)
 def main(
+    ctx: typer.Context,
     version: bool = typer.Option(
         False,
         "--version",
@@ -552,7 +554,10 @@ def main(
 
     configure_stdout()
     setup_logging(verbose=verbose, debug=debug)
-    if len(sys.argv) != 1 or not sys.stdin.isatty():
+    if ctx.invoked_subcommand is not None:
+        return
+    if not sys.stdin.isatty():
+        show_home_menu(input_fn=lambda _: "Q")
         return
     show_home_menu()
 

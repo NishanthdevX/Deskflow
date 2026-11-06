@@ -5,7 +5,7 @@
 Requires Python 3.11 or newer and [uv](https://docs.astral.sh/uv/).
 
 ```
-git clone <repo-url>
+git clone https://github.com/NishanthdevX/Deskflow.git
 cd deskflow
 uv sync
 ```

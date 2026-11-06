@@ -3,7 +3,7 @@
 ## 1. What this is
 DESKFLOW is an open-source command-line device-care tool for Windows 10/11 and macOS 12+.
 It samples system telemetry, runs a short measured performance probe, and uses trained ML
-models to predict how sluggish the machine will be 30 seconds from now. It tags the likely
+models to predict how sluggish the machine will be 20 seconds from now. It tags the likely
 cause (CPU pressure or throttling, memory pressure, disk pressure, background app load),
 offers safe fixes, and re-measures after a fix. It is also a college ML project, so model
 training, offline evaluation and live accuracy comparison are first-class features.
@@ -47,10 +47,10 @@ Package name: deskflow. Command: deskflow. Python 3.11 or newer.
   follow symlinks out of them.
 - Every action logs what it did, and reports bytes or MB freed as measured, not estimated.
 
-## 5. ML design summary (implemented in Phases 2 to 7)
+## 5. ML design summary
 - Probe: fixed CPU, memory and disk micro-workloads timed with perf_counter_ns. This is the
   measured ground truth for how sluggish the machine is.
-- Regression: predict probe latency 30 seconds ahead from rolling telemetry features.
+- Regression: predict probe latency 20 seconds ahead from rolling telemetry features.
   Compare Linear, Ridge, Random Forest, Gradient Boosting and XGBoost. Metrics: MAE,
   RMSE, R2. Time-based train/test split only; never a random split.
 - Classification: tag the issue (healthy, cpu_pressure, memory_pressure, disk_pressure,
@@ -63,16 +63,7 @@ Package name: deskflow. Command: deskflow. Python 3.11 or newer.
   predicted time. All models run side by side.
 
 ## 6. Working agreement
-- Do only the current phase. Do not start later phases or add unrequested features.
 - Make decisions yourself. If something is ambiguous, choose the simplest option that
-  satisfies this brief and record it in docs/decisions/. Do not stop to ask questions
-  unless the phase prompt cannot be completed at all.
-- Run every verification command listed in the phase and fix failures before finishing.
-- Finish with a completion report: files created, commands run with their real output,
-  acceptance criteria checked one by one, deviations and why, and known limitations.
-- Update CHANGELOG.md (Keep a Changelog format) at the end of each phase.
-
-## 7. Phases
-0 Foundation. 1 Collector and probe. 2 Dataset and features. 3 Training and offline
-evaluation. 4 Inference and health score. 5 CLI and dashboard. 6 Fixes and re-validation.
-7 Live accuracy view. 8 Packaging and release. 9 Report and demo.
+  satisfies this brief and record it in docs/decisions/.
+- Run every verification command and fix failures before finishing.
+- Commits use Conventional Commits (feat:, fix:, docs:, test:, chore:, refactor:).

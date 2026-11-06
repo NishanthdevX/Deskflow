@@ -87,6 +87,10 @@ def scan_command(
     """Run an end-to-end device scan, evaluate health score, and recommend fixes."""
     import numpy as np
 
+    if seconds < 13:
+        console.print(f"[red]Error: --seconds must be at least 13 (got {seconds}).[/red]")
+        raise typer.Exit(code=2)
+
     adapter = get_adapter()
     total_start = time.perf_counter()
     measuring_s = 0.0

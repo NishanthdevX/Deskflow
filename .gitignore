@@ -31,6 +31,10 @@ report*.html
 *.html
 *.csv.gz
 
+# Allow documentation website files
+!docs/site/**
+!docs/site/**/*.html
+
 # Ensure package data (bundled models) is always tracked
 !src/deskflow/data/**
 !src/deskflow/data/models/**
@@ -62,3 +66,9 @@ Thumbs.db
 # OS
 desktop.ini
 
+
+# Internal build notes (untracked)
+docs/phases/
+phases/
+phase-*.md
+site/_review/

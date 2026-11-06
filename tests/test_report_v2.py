@@ -60,9 +60,11 @@ def test_synthetic_banner_present(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     md_out = tmp_path / "banner_test.md"
 
     import deskflow.commands.report as report_cmd
+    from deskflow.truth import ModelProvenance
 
     orig_load_report_data = report_cmd.load_report_data
     orig_load_card = report_cmd.load_model_card
+    orig_load_provenance = report_cmd.load_provenance
 
     monkeypatch.setattr(
         report_cmd,
@@ -74,6 +76,22 @@ def test_synthetic_banner_present(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         "load_model_card",
         lambda p: {**orig_load_card(p), "synthetic": True},
     )
+
+    def _synthetic_provenance(model_dir: object = None) -> ModelProvenance:
+        prov = orig_load_provenance(model_dir)  # type: ignore[arg-type]
+        return ModelProvenance(
+            synthetic=True,
+            dataset_hash=prov.dataset_hash,
+            train_rows=prov.train_rows,
+            test_rows=prov.test_rows,
+            sessions_count=prov.sessions_count,
+            machines_count=prov.machines_count,
+            power_states=prov.power_states,
+            created_utc=prov.created_utc,
+            git_commit=prov.git_commit,
+        )
+
+    monkeypatch.setattr(report_cmd, "load_provenance", _synthetic_provenance)
 
     res = runner.invoke(
         report_app,

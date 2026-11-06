@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DESKFLOW — Intelligent Device Health Monitoring and Predictive Maintenance</title>
+<meta name="description" content="DESKFLOW measures real system performance, analyses telemetry with machine learning, predicts slowdowns and offers safe, verified fixes. Local-first Python utility for Windows and macOS.">
+<meta property="og:title" content="DESKFLOW — Device health monitoring and predictive maintenance"><meta property="og:description" content="Measured performance. Explainable diagnosis. Controlled remediation."><meta property="og:type" content="website">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="css/style.css">
+</head><body>
+<header><div class="w"><a class="logo" href="#top">DESKFLOW</a>
+<button id="mb" type="button" aria-expanded="false" aria-controls="nv">Menu</button>
+<nav id="nv" aria-label="Primary"><a href="#overview">Overview</a><a href="#architecture">Architecture</a><a href="#machine-learning">Machine Learning</a><a href="#model-lab">Model Lab</a><a href="#fix-center">Fix Center</a><a href="#installation">Installation</a><a href="https://github.com/NishanthdevX/Deskflow">GitHub</a></nav></div></header>
+<main id="top">
+<section class="dk" style="padding-top:72px"><div class="w hero"><div>
+<p class="lab">DESKFLOW / device intelligence</p>
+<h1>Your machine. Understood beyond the numbers.</h1>
+<p>DESKFLOW measures real system performance, analyses telemetry with machine learning, predicts potential slowdowns and helps identify what deserves attention.</p>
+<a class="btn p" href="#architecture">Explore the architecture</a><a class="btn" href="https://github.com/NishanthdevX/Deskflow">View source code</a></div>
+<div class="pv" role="img" aria-label="Illustrative interface with placeholder values"><h4>deskflow plugged</h4>
+<div class="r"><span>Device health</span><span>x / 100</span></div><div class="r"><span>CPU</span><span>x.x %</span></div><div class="r"><span>Memory</span><span>x.x GB free</span></div><div class="r"><span>Disk</span><span>x.x %</span></div><div class="r"><span>Power</span><span>AC | battery</span></div><div class="r"><span>Predicted slowdown (20 s)</span><span>x.xx&times;</span></div><div class="r"><span>Likely issue</span><span>&mdash;</span></div><div class="r"><span>Model</span><span>real data | synthetic demo</span></div>
+<small>Illustrative interface &mdash; not a live system measurement</small></div></div></section>
+
+<section id="overview" class="lt1" ><div class="w rv"><p class="lab">What it is</p><h2>Monitoring is only the beginning.</h2>
+<div class="two"><div><h3>The problem</h3><p>Computers slow down gradually: CPU pressure, memory pressure, heavy swap use, storage bottlenecks, background applications, resource contention, and CPU throttling where the platform exposes enough information. Utilisation percentages alone do not show how real work performs.</p>
+<p>DESKFLOW is a device-care utility. It is not an antivirus or malware scanner.</p>
+<p>Ordinary monitors show utilisation and processes. DESKFLOW adds a measured probe, a per-machine baseline, a 20-second prediction, a cause estimate and a re-measurement after a fix.</p></div>
+<div><h3>The approach</h3><ol class="st"><li><b>Telemetry.</b> CPU, memory, disk and process data.</li><li><b>Controlled measurement.</b> A fixed CPU, memory and disk probe.</li><li><b>Feature engineering.</b> Rolling windows into numbers.</li><li><b>Inference.</b> Regression, classification, anomaly detection.</li><li><b>Health score.</b> Derived from predicted slowdown.</li><li><b>Issue identification.</b> Likely cause with evidence.</li><li><b>Safe remediation.</b> Previewed, confirmed, logged.</li><li><b>Post-fix validation.</b> Measure again, report honestly.</li></ol></div></div></div></section>
+
+<section id="architecture" class="dk"><div class="w rv"><p class="lab">Architecture</p><h2>From raw telemetry to an actionable diagnosis.</h2>
+<p>Select a stage or press Play. The packet follows the same path a real scan takes.</p>
+<div id="rt"><div class="stp" role="group" aria-label="Runtime pipeline stages"></div><div class="trk"><div class="pk"></div></div><div class="ctl"></div><div class="dt" aria-live="polite"></div></div>
+<h3 style="margin-top:56px">Source modules</h3>
+<p>Windows and macOS expose different system capabilities, so common code reaches them through the <code>platform</code> package. ML libraries are imported lazily so the CLI stays light and runtime measurements are not disturbed by model loading.</p>
+<div class="mods" id="mods"></div><div class="dt" id="mdd" aria-live="polite"></div></div></section>
+
+<section id="telemetry" class="lt1" ><div class="w rv"><p class="lab">Telemetry and probes</p><h2>Measure the machine. Do not just observe it.</h2>
+<div class="two"><div><h3>System telemetry</h3><p>Sampled every 2 s: CPU utilisation and frequency where reliable, memory and swap, disk activity, process data, and power state. A capability the platform does not expose is marked unavailable, not recorded as zero.</p></div>
+<div><h3>Performance probes</h3><p>Every 4 s DESKFLOW times a fixed CPU loop, memory allocation and disk write with a high-resolution clock. The workload must stay identical between data collection and live inference, or the baseline comparison becomes meaningless. Background activity adds noise, so calibration and a stability check run first.</p></div></div>
+<h3>Separate baselines for battery and AC</h3><p>Laptop performance changes with power state, so each state has its own healthy baseline, and a result is only compared with the baseline for the state it was measured in. The CLI checks baseline age and drift and offers recalibration.</p>
+<div class="tw"><table><tr><th>Track</th><th>Baseline</th><th>Used when</th></tr><tr><td>Battery</td><td>Measured per machine</td><td>Unplugged</td></tr><tr><td>AC</td><td>Measured per machine</td><td>Plugged in</td></tr></table></div></div></section>
+
+<section id="machine-learning" class="lt2"><div class="w rv"><p class="lab">Machine learning</p><h2>Different algorithms. Different responsibilities.</h2>
+<p>Telemetry becomes a numeric feature row: 6 s and 12 s rolling windows over CPU, memory, swap, disk, probe ratios, process and thread counts. The design spec lists 27 features. Features use past data only, and the same builder serves training and live inference.</p>
+<div class="tw"><table><tr><th>Task</th><th>Question</th><th>Models</th><th>Baselines</th></tr>
+<tr><td>Regression</td><td>How slow will the probe be in 20 s, relative to this machine&rsquo;s baseline?</td><td>Ridge (L2-regularised linear), Random Forest (averaged trees), XGBoost (boosted trees)</td><td>Persistence (same as now), Rolling Mean. Not trained models.</td></tr>
+<tr><td>Classification</td><td>Which cause is likely: healthy, CPU, memory, disk or background load?</td><td>Logistic Regression, Random Forest, XGBoost</td><td>Majority-class</td></tr>
+<tr><td>Anomaly detection</td><td>Is this state unusual compared with healthy behaviour?</td><td>Isolation Forest, fitted on healthy rows only</td><td>None</td></tr></table></div>
+<p style="margin-top:16px">Classification chooses among known causes. Anomaly detection flags unusual behaviour without naming a cause. Primary models are chosen by grouped cross-validation, recorded in the model card, and no model is assumed to win.</p>
+<h3>Health score</h3><p>Score = 100 at a predicted ratio of 1.0&times; or less, falling linearly to 0 at 3.0&times;. Move the slider.</p>
+<label>Predicted slowdown <b id="rv" class="mono"></b> <input id="rr" type="range" min="0.8" max="3.5" step="0.1" value="1.0"></label>
+<p class="mono">Score: <b id="sv"></b> / 100</p>
+<p>The score is ML-derived. Memory, storage and background-app status are shown as measured readings, not as separate predictions. Contributing factors come from XGBoost&rsquo;s built-in contributions.</p></div></section>
+
+<section id="training" class="lt1 tr"><div class="w rv"><p class="lab">Training</p><h2>Training is a process, not a button.</h2>
+<p>Data comes from controlled lab scenarios and normal use on real machines. Whole sessions are held out, tuning uses grouped cross-validation by run, preprocessing is fitted on training data only, and the test set is touched once.</p>
+<div id="tp"><div class="stp" role="group" aria-label="Training pipeline stages"></div><div class="trk"><div class="pk"></div></div><div class="ctl"></div><div class="dt" aria-live="polite"></div></div></div></section>
+
+<section id="model-lab" class="dk"><div class="w rv"><p class="lab">Model Lab</p><h2>Which model predicts better? Let the measurements decide.</h2>
+<p>Results are read from <code>data/project-data.json</code>, generated from the model card and report data. A synthetic model never shows metrics. A model is called better than Persistence only when the 95% bootstrap interval of the improvement excludes zero.</p>
+<div id="lab" aria-live="polite"></div>
+<div class="two" style="margin-top:40px"><div><h3>Metrics</h3><p><b>MAE</b>: average absolute error; lower is better. <b>RMSE</b>: penalises large errors more. <b>R&sup2;</b>: share of target variance explained; not an accuracy percentage.</p></div>
+<div><h3>Live verification</h3><p>Every model predicts at time t, the machine keeps running, and about 20 s later a new probe measures the truth. Fewer than 30 resolved pairs cannot rank models. Held-out evaluation and live verification are reported separately.</p></div></div></div></section>
+
+<section id="fix-center" class="lt1" ><div class="w rv"><p class="lab">Fix Center</p><h2>Diagnosis is useful only when action is safe.</h2>
+<p>Planned actions per the Phase 10 spec (confirm each against the code): clean temporary files, clean supported caches, empty recycle bin or trash, trim memory where supported, close idle applications, end selected heavy tasks.</p>
+<div class="two"><div><h3>Safety mechanisms</h3><ol class="st"><li>Dry-run preview</li><li>Explicit confirmation; typed confirmation for CAUTION actions</li><li>Protected processes and parent-process protection</li><li>Current-user processes only</li><li>Allowlisted cleanup directories, symlink protection</li><li>Audit log</li></ol></div>
+<div><h3>Verify the result</h3><ol class="st"><li>Initial scan</li><li>Fix inventory</li><li>User selection</li><li>Safety check</li><li>Execution</li><li>Wait and re-sample</li><li>Before and after comparison</li></ol></div></div>
+<p>Closing applications can lose unsaved work. Memory trimming can be temporary. DESKFLOW never promises recovered space in advance, and reports it honestly when the score does not improve.</p></div></section>
+
+<section id="installation" class="dk"><div class="w rv"><p class="lab">Installation</p><h2>From repository to your machine.</h2>
+<p>Commands below come from the project brief. Read the installer script before running it, and verify it against the repository.</p>
+<div class="tabs" role="tablist"><button role="tab" aria-selected="true" data-t="win">Windows</button><button role="tab" aria-selected="false" data-t="mac">macOS</button><button role="tab" aria-selected="false" data-t="dev">Development</button></div>
+<div class="tp" id="win"><pre id="c1">irm https://raw.githubusercontent.com/NishanthdevX/Deskflow/main/install.ps1 | iex</pre><button class="cp" data-copy="c1">Copy</button></div>
+<div class="tp" id="mac" hidden><pre id="c2">curl -fsSL https://raw.githubusercontent.com/NishanthdevX/Deskflow/main/install.sh | bash</pre><button class="cp" data-copy="c2">Copy</button></div>
+<div class="tp" id="dev" hidden><pre id="c3">git clone https://github.com/NishanthdevX/Deskflow.git
+cd Deskflow
+uv sync
+uv run deskflow --help</pre><button class="cp" data-copy="c3">Copy</button></div>
+<h3 style="margin-top:32px">Commands</h3>
+<div class="tw"><table><tr><th>Command</th><th>Purpose</th></tr><tr><td class="mono">deskflow battery</td><td>About 75 s check on battery: score, prediction, model comparison</td></tr><tr><td class="mono">deskflow plugged</td><td>Same on AC power (alias <code>ac</code>)</td></tr><tr><td class="mono">deskflow full</td><td>About 10 min stress test with live accuracy of every model</td></tr><tr><td class="mono">deskflow fix</td><td>Fix Center</td></tr><tr><td class="mono">deskflow pipeline</td><td>Animated pipeline on the live machine</td></tr><tr><td class="mono">deskflow info</td><td>System information</td></tr></table></div>
+<p class="mu">Exit codes per the Phase 14 spec: 0 ok, 1 error, 2 usage, 3 unsupported platform, 4 baseline missing, 5 declined, blocked or wrong power state. Health status goes in the output, never the exit code.</p>
+<p class="mu">Preview this site: <code>python -m http.server 8000 --directory docs/site</code></p></div></section>
+
+<section id="stack" class="lt2"><div class="w rv"><p class="lab">Stack</p><h2>Built with Python. Designed around measurable behaviour.</h2>
+<div class="tw"><table><tr><th>Layer</th><th>Technology (from design docs)</th></tr><tr><td>Language, packaging</td><td>Python, uv</td></tr><tr><td>CLI and terminal UI</td><td>Typer, Rich (the Textual dashboard was dropped)</td></tr><tr><td>Telemetry</td><td>psutil</td></tr><tr><td>Machine learning</td><td>scikit-learn, XGBoost</td></tr></table></div>
+<p class="mu">Exact versions, runtime versus training dependencies, and the remaining entries must be copied from <code>pyproject.toml</code>.</p></div></section>
+
+<section id="limits" class="lt1" ><div class="w rv"><p class="lab">Privacy and limits</p><h2>Designed to inspect locally. Not to transmit.</h2>
+<div class="two"><div><h3>Privacy</h3><p>Measurements and models stay on the machine. No private data is sent to a remote ML service.</p></div>
+<div><h3>Limitations</h3><p>Targets Windows and macOS only. GPU workloads are outside the prediction scope. Results depend on data quality and diversity; a model trained on one machine has limited evidence for others. Power management and background activity affect probe stability. A synthetic model is a demonstration, not validation.</p></div></div>
+<h3>FAQ</h3>
+<details><summary>What does it predict?</summary><p>The probe slowdown ratio about 20 seconds ahead.</p></details>
+<details><summary>Why several regression models?</summary><p>To compare them on the same data and against Persistence, instead of assuming one wins.</p></details>
+<details><summary>Does it use Kaggle data?</summary><p>No. Data is collected on real machines.</p></details>
+<details><summary>What does DEMO MODEL mean?</summary><p>The bundled model was trained on synthetic data. It shows the pipeline, not real accuracy.</p></details>
+<details><summary>Will the score always improve after a fix?</summary><p>No. DESKFLOW measures again and reports what it finds.</p></details></div></section>
+</main>
+<footer><div class="w"><h3 style="font-family:var(--serif)">DESKFLOW</h3><p>Measured performance. Explainable diagnosis. Controlled remediation.</p>
+<a href="https://github.com/NishanthdevX/Deskflow">GitHub</a><a href="https://github.com/NishanthdevX/Deskflow#readme">README</a><a href="https://github.com/NishanthdevX/Deskflow/tree/main/docs">Documentation</a><a href="https://github.com/NishanthdevX/Deskflow/blob/main/CHANGELOG.md">Changelog</a></div></footer>
+<script src="js/app.js"></script></body></html>
