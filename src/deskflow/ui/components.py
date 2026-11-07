@@ -1,43 +1,58 @@
-"""Terminal Design v2 component primitives: banner, status strip, KPI cards, bars, badges."""
+"""Terminal Design v4 component primitives: responsive banner, status strip, KPI cards, Gauge, BarCompare, ProcessTree, Verdict, KeyHints."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from rich import box
-from rich.console import RenderableType
+from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+from rich.tree import Tree
 
 from deskflow.ui.theme import (
     COLOR_CYAN,
+    COLOR_GREEN,
     COLOR_GREY,
+    COLOR_RED,
     COLOR_WHITE,
+    COLOR_YELLOW,
     DOMAIN_BORDER_STYLES,
     STATUS_STYLES,
 )
 
 
-def banner(version: str, width: int = 100, plain: bool = False) -> RenderableType:
+def banner(version: str, width: int = 100, height: int = 34, plain: bool = False) -> RenderableType:
     """Render the official block-letter DESKFLOW banner for the home screen.
 
-    Falls back to a plain single-line title when width < 80, plain is requested,
-    or non-UTF-8 output is active.
+    Tiers:
+    - height >= 34 and width >= 80: full 6-row block banner.
+    - height >= 26 and width >= 60: spaced wordmark.
+    - else: plain compact title.
     """
-    if plain or width < 80:
+    if plain or width < 80 or height < 26:
         text = Text()
         text.append(f"DESKFLOW v{version}\n", style="bold")
         text.append("Device health scan with ML slowdown prediction\n", style="dim")
         return text
 
-    # Dense block-letter DESKFLOW in cyan (fits within 80 cols)
+    if height < 34:
+        # Spaced wordmark
+        text = Text()
+        text.append("D E S K F L O W", style=f"bold {COLOR_CYAN}")
+        text.append(f"  v{version}\n", style=COLOR_GREY)
+        text.append("Device health scan with ML slowdown prediction\n", style="dim")
+        return text
+
+    # Official 6-row block-letter DESKFLOW in cyan (D16 fix)
     art = (
-        "  ██████╗ ███████╗███████╗██╗  ██╗███████╗██╗      ██████╗ ██╗    ██╗\n"
-        "  ██╔══██╗██╔════╝██╔════╝██║ ██╔╝██╔════╝██║     ██╔═══██╗██║    ██║\n"
-        "  ██║  ██║█████╗  ███████╗█████═╝ █████╗  ██║     ██║   ██║██║ █╗ ██║\n"
-        "  ██║  ██║██╔══╝  ╚════██║██╔═██╗ ██╔══╝  ██║     ██║   ██║██║███╗██║\n"
-        "  ██████╔╝███████╗███████║██║  ██╗██║     ███████╗╚██████╔╝╚███╔███╔╝"
+        "  ██████╗  ███████╗ ███████╗ ██╗  ██╗ ███████╗ ██╗       ██████╗  ██╗    ██╗\n"
+        "  ██╔══██╗ ██╔════╝ ██╔════╝ ██║ ██╔╝ ██╔════╝ ██║      ██╔═══██╗ ██║    ██║\n"
+        "  ██║  ██║ █████╗   ███████╗ █████═╝  █████╗   ██║      ██║   ██║ ██║ █╗ ██║\n"
+        "  ██║  ██║ ██╔══╝   ╚════██║ ██╔═██╗  ██╔══╝   ██║      ██║   ██║ ██║███╗██║\n"
+        "  ██████╔╝ ███████╗ ███████║ ██║  ██╗ ██║      ███████╗ ╚██████╔╝ ╚███╔███╔╝\n"
+        "  ╚═════╝  ╚══════╝ ╚══════╝ ╚═╝  ╚═╝ ╚═╝      ╚══════╝  ╚═════╝   ╚══╝╚══╝ "
     )
     t = Text(art, style=COLOR_CYAN)
     sub = Text(
@@ -57,9 +72,10 @@ def status_strip(
     duration_s: float | None = None,
     plain: bool = False,
 ) -> Table:
-    """Render a dense single-row status strip."""
-    table = Table.grid(expand=True)
-    for _ in range(5 if duration_s is not None else 4):
+    """Render a clean single-row status strip with fixed padding and no garbled titles."""
+    table = Table.grid(expand=True, padding=(0, 2))
+    col_count = 5 if duration_s is not None else 4
+    for _ in range(col_count):
         table.add_column()
 
     os_cell = f"OS: {os_info}"
@@ -82,11 +98,7 @@ def status_strip(
 
 
 def bar(value: float, maximum: float = 1.0, width: int = 14, plain: bool = False) -> str:
-    """Render a bounded horizontal progress/usage bar.
-
-    Unicode: filled U+2588, track U+2591.
-    Plain ASCII: filled '#', track '-'.
-    """
+    """Render a bounded horizontal progress/usage bar."""
     if maximum <= 0:
         fraction = 0.0
     else:
@@ -105,12 +117,10 @@ def sparkline(values: list[float], width: int = 12, plain: bool = False) -> str:
     if not values:
         return "-" * width if plain else "░" * width
 
-    # Resample or truncate to requested width
     if len(values) > width:
         step = len(values) / width
         sampled = [values[int(i * step)] for i in range(width)]
     elif len(values) < width:
-        # Pad left with the first value or minimum
         min_v = min(values)
         sampled = [min_v] * (width - len(values)) + list(values)
     else:
@@ -132,7 +142,6 @@ def sparkline(values: list[float], width: int = 12, plain: bool = False) -> str:
             out.append(chars[idx])
         return "".join(out)
 
-    # Unicode sparkline blocks: U+2581 to U+2588 (8 heights)
     blocks = " ▂▃▄▅▆▇█"
     out_uni: list[str] = []
     for v in sampled:
@@ -153,6 +162,58 @@ def badge(label: str, rating: str, plain: bool = False) -> str:
     return f"[{style}][{label}][/]"
 
 
+class Gauge:
+    """Gauge showing an anomaly score against a threshold with marker and status."""
+
+    def __init__(
+        self,
+        value: float,
+        threshold: float,
+        max_value: float = 1.0,
+        width: int = 14,
+        plain: bool = False,
+    ):
+        self.value = value
+        self.threshold = threshold
+        self.max_value = max(0.001, max_value)
+        self.width = width
+        self.plain = plain
+
+    @property
+    def status(self) -> str:
+        """Return normal, borderline (within 5% of threshold), or unusual."""
+        if self.threshold <= 0:
+            return "normal"
+        diff_pct = (self.value - self.threshold) / self.threshold
+        if abs(diff_pct) <= 0.05:
+            return "borderline"
+        if self.value > self.threshold:
+            return "unusual"
+        return "normal"
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        v_norm = max(0.0, min(1.0, self.value / self.max_value))
+        t_norm = max(0.0, min(1.0, self.threshold / self.max_value))
+
+        v_pos = int(round(v_norm * self.width))
+        t_pos = int(round(t_norm * self.width))
+
+        track = ["░"] * self.width if not self.plain else ["-"] * self.width
+        for i in range(min(v_pos, self.width)):
+            track[i] = "█" if not self.plain else "#"
+
+        if 0 <= t_pos < self.width:
+            track[t_pos] = "│" if not self.plain else "|"
+
+        bar_str = "".join(track)
+        status_word = self.status
+        if self.plain:
+            yield Text(f"{bar_str} {self.value:.2f} ({status_word})")
+        else:
+            style = COLOR_GREEN if status_word == "normal" else (COLOR_YELLOW if status_word == "borderline" else COLOR_RED)
+            yield Text.from_markup(f"[{style}]{bar_str}[/] [{COLOR_GREY}]{self.value:.2f} ({status_word})[/]")
+
+
 def kpi_card(
     title: str,
     hero_value: str,
@@ -163,36 +224,30 @@ def kpi_card(
     plain: bool = False,
     bar_width: int = 14,
 ) -> Panel:
-    """Render a structured 4-line KPI card.
-
-    Line 1: Header in domain accent colour.
-    Line 2: Hero value in bold white with muted context.
-    Line 3: Pipe-separated sub-metrics.
-    Line 4: 14-char bar (if real fraction exists) with percentage.
-    """
+    """Render a structured 4-line responsive KPI card."""
     accent = DOMAIN_BORDER_STYLES.get(domain, COLOR_GREY)
     lines: list[str] = []
 
-    # Line 1
+    # Line 1: Header
     if plain:
         lines.append(f"[{title}]")
     else:
         lines.append(f"[{accent}][{title}][/]")
 
-    # Line 2
+    # Line 2: Hero value
     if plain:
         lines.append(f"{hero_value}  {context}".strip())
     else:
         lines.append(f"[{COLOR_WHITE}]{hero_value}[/]  [{COLOR_GREY}]{context}[/]".strip())
 
-    # Line 3
+    # Line 3: Sub-metrics
     sub_str = " | ".join(sub_metrics) if sub_metrics else ""
     if plain:
         lines.append(sub_str)
     else:
         lines.append(f"[{COLOR_GREY}]{sub_str}[/]")
 
-    # Line 4
+    # Line 4: Bounded bar
     if bar_ratio is not None:
         pct = int(round(max(0.0, min(1.0, bar_ratio)) * 100))
         rendered_bar = bar(bar_ratio, 1.0, width=bar_width, plain=plain)
@@ -210,6 +265,72 @@ def kpi_card(
         border_style=COLOR_GREY if plain else accent,
         expand=True,
     )
+
+
+def generate_verdict_sentence(
+    score: int,
+    predicted_ratio: float,
+    cause_tag: str,
+    cause_conf: float,
+    first_action_title: str | None = None,
+    potential_mb: float = 0.0,
+) -> str:
+    """Generate a clean rule-based 3-second verdict sentence."""
+    pot_str = f"{potential_mb:.0f} MB of cleanable files found" if potential_mb > 0 else "no clutter found"
+    if score >= 80:
+        return (
+            f"Your laptop is running normally. Predicted slowdown {predicted_ratio:.2f}x. "
+            f"Nothing urgent; {pot_str}."
+        )
+    action_part = f"Suggested action: {first_action_title}." if first_action_title else "Run Fix Center to optimize."
+    cause_str = cause_tag.replace("_", " ")
+    return (
+        f"Performance pressure detected. Predicted slowdown {predicted_ratio:.2f}x. "
+        f"Likely cause: {cause_str} ({cause_conf:.0%}). {action_part}"
+    )
+
+
+def render_key_hints(hints: list[tuple[str, str]], plain: bool = False) -> Table:
+    """Render a fixed key navigation bar."""
+    grid = Table.grid(expand=True, padding=(0, 2))
+    for _ in hints:
+        grid.add_column()
+
+    cells: list[str] = []
+    for key, desc in hints:
+        if plain:
+            cells.append(f"[{key}] {desc}")
+        else:
+            cells.append(f"[{COLOR_CYAN}][{key}][/{COLOR_CYAN}] [{COLOR_GREY}]{desc}[/]")
+    grid.add_row(*cells)
+    return grid
+
+
+def render_process_tree(
+    heavy_tasks: list[Any],
+    max_items: int = 5,
+    plain: bool = False,
+) -> Tree:
+    """Render heavy tasks grouped by app as a Rich ProcessTree, marking locked system apps."""
+    tree = Tree("[bold cyan]Active Background Tasks[/bold cyan]" if not plain else "Active Background Tasks")
+    if not heavy_tasks:
+        tree.add("[dim]No heavy background tasks detected[/dim]" if not plain else "No heavy background tasks detected")
+        return tree
+
+    for t in heavy_tasks[:max_items]:
+        name = getattr(t, "name", str(t))
+        cpu = getattr(t, "cpu_percent", 0.0)
+        rss = getattr(t, "rss_bytes", 0) / (1024 * 1024)
+        pcount = getattr(t, "process_count", 1)
+
+        label = f"{name} ({pcount} proc) - {cpu:.1f}% CPU, {rss:.0f} MB RAM"
+        node = tree.add(label)
+        pids = getattr(t, "pids", ())
+        if pids:
+            pid_str = ", ".join(f"PID {p}" for p in pids[:3])
+            node.add(f"[dim]{pid_str}[/dim]" if not plain else pid_str)
+
+    return tree
 
 
 def domain_panel(

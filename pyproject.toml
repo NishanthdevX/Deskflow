@@ -89,7 +89,7 @@ module = ["xgboost.*", "shap.*", "textual.*", "joblib.*", "sklearn.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = "deskflow.platform.windows"
+module = ["deskflow.platform.windows", "deskflow.platform.macos"]
 disable_error_code = ["attr-defined"]
 
 [tool.pytest.ini_options]

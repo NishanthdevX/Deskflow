@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from deskflow.ml.artifacts import get_bundled_model_dir, resolve_model_dir
+from deskflow.ml.facts import ModelFacts, load_model_facts
 
 logger = logging.getLogger(__name__)
 
@@ -192,3 +193,15 @@ def verify_model_hashes(model_dir: Path | None = None) -> tuple[bool, list[str]]
 
     passed = len(errors) == 0
     return passed, errors
+
+
+__all__ = [
+    "ModelProvenance",
+    "ModelFacts",
+    "load_model_facts",
+    "load_provenance",
+    "verify_model_hashes",
+    "compute_file_sha256",
+    "NO_REAL_DATA_MESSAGE",
+]
+

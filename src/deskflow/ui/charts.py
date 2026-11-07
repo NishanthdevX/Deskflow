@@ -26,7 +26,7 @@ def bar_chart_with_whiskers(
 ) -> Table:
     """Render a horizontal bar chart with 95% confidence interval whiskers.
 
-    Baseline row (e.g. Persistence) is clearly marked and dimmed.
+    Uses a dedicated BASELINE badge column to prevent model names from wrapping.
     """
     table = Table(
         box=box.ASCII if plain else box.SIMPLE_HEAD,
@@ -34,9 +34,10 @@ def bar_chart_with_whiskers(
         header_style=COLOR_CYAN if not plain else None,
         expand=True,
     )
-    table.add_column("Model", style="bold" if not plain else None)
-    table.add_column(metric_label, justify="right")
-    table.add_column("95% CI", justify="right")
+    table.add_column("Model", style="bold" if not plain else None, no_wrap=True)
+    table.add_column("Type", justify="center", width=10)
+    table.add_column(metric_label, justify="right", width=8)
+    table.add_column("95% CI", justify="right", width=16)
     table.add_column("Distribution", justify="left")
 
     if not rows:
@@ -46,8 +47,8 @@ def bar_chart_with_whiskers(
     max_val = max(1e-6, max_val * 1.1)
 
     for name, mean_val, ci_low, ci_high, is_baseline in rows:
-        ci_str = f"[{ci_low:.3f}, {ci_high:.3f}]"
-        mean_str = f"{mean_val:.3f}"
+        ci_str = f"[{ci_low:.4f}, {ci_high:.4f}]" if mean_val < 0.05 else f"[{ci_low:.3f}, {ci_high:.3f}]"
+        mean_str = f"{mean_val:.4f}" if mean_val < 0.05 else f"{mean_val:.3f}"
 
         # Build whisker track of fixed width
         track = ["-" if plain else "░"] * width
@@ -72,18 +73,19 @@ def bar_chart_with_whiskers(
                 track[p_mean] = "#" if plain else "█"
 
         chart_bar = "".join(track)
-        label_disp = f"{name} (baseline)" if is_baseline else name
+        badge_str = "[dim]BASELINE[/dim]" if (is_baseline and not plain) else ("BASELINE" if is_baseline else "MODEL")
 
         if is_baseline:
             style = "dim"
             table.add_row(
-                Text(label_disp, style=style),
+                Text(name, style=style),
+                Text(badge_str, style=style),
                 Text(mean_str, style=style),
                 Text(ci_str, style=style),
                 Text(chart_bar, style=style),
             )
         else:
-            table.add_row(label_disp, mean_str, ci_str, chart_bar)
+            table.add_row(name, badge_str, mean_str, ci_str, chart_bar)
 
     return table
 

@@ -305,14 +305,10 @@ class RuntimeModels:
             },
         }
 
-        anomalies = anomaly_scores >= threshold
-        return {
-            "slowdown_ratio": slowdown,
-            "issue_probabilities": probs,
-            "predicted_issue": predicted_classes,
-            "anomaly": {
-                "score": [round(float(s), 4) for s in anomaly_scores],
-                "is_anomaly": [bool(a) for a in anomalies],
-                "threshold": round(threshold, 4),
-            },
-        }
+    def top_contributors(self, row: np.ndarray, k: int = 3) -> list[tuple[str, float]]:
+        """Return top-k features contributing most strongly to prediction by SHAP magnitude."""
+        from deskflow.ml.explain import top_contributors as calc_contribs
+
+        if self.xgb_reg is not None:
+            return calc_contribs(row, self.xgb_reg, feature_names=self.feature_order, k=k)
+        return []

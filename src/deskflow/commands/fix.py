@@ -15,6 +15,7 @@ import typer
 from rich import box
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
 from deskflow.baseline import get_current_power_state, load_baseline
 from deskflow.collector.models import Record
@@ -241,7 +242,7 @@ def _gather_state(adapter: Any, baseline: Any, runtime: Any, card: Any) -> dict[
 
 
 def _render_tools_table(tools: list[FixToolInfo], plain: bool = False) -> Table:
-    """Format the Fix Center tools table."""
+    """Format the Fix Center tools table with dim indicators for empty tools (D22)."""
     from deskflow.ui.components import badge
 
     table = Table(
@@ -256,14 +257,25 @@ def _render_tools_table(tools: list[FixToolInfo], plain: bool = False) -> Table:
     table.add_column("What it changes")
 
     for t in tools:
+        has_work = t.potential_bytes > 0
         risk_cell = badge(t.risk, t.risk, plain=plain)
-        table.add_row(
-            str(t.number),
-            t.title,
-            risk_cell,
-            t.potential_str,
-            t.what_it_changes,
-        )
+        pot_disp = t.potential_str if has_work else ("[dim]nothing to do[/dim]" if not plain else "nothing to do")
+        if not has_work and not plain:
+            table.add_row(
+                Text(str(t.number), style="dim"),
+                Text(t.title, style="dim"),
+                Text(t.risk, style="dim"),
+                pot_disp,
+                Text(t.what_it_changes, style="dim"),
+            )
+        else:
+            table.add_row(
+                str(t.number),
+                t.title,
+                risk_cell,
+                pot_disp,
+                t.what_it_changes,
+            )
     return table
 
 
@@ -326,7 +338,19 @@ def fix_command(
     plain: bool = typer.Option(False, "--plain", help="Pure ASCII output."),
 ) -> None:
     """Diagnose system, execute confirmed safe remediation actions, and verify with re-scan."""
+    import typer.models
     from deskflow.ui.theme import use_plain_output
+
+    list_tools = bool(list_tools) if not isinstance(list_tools, typer.models.OptionInfo) else False
+    json_output = bool(json_output) if not isinstance(json_output, typer.models.OptionInfo) else False
+    dry_run = bool(dry_run) if not isinstance(dry_run, typer.models.OptionInfo) else False
+    yes = bool(yes) if not isinstance(yes, typer.models.OptionInfo) else False
+    include_caution = bool(include_caution) if not isinstance(include_caution, typer.models.OptionInfo) else False
+    no_rescan = bool(no_rescan) if not isinstance(no_rescan, typer.models.OptionInfo) else False
+    force = bool(force) if not isinstance(force, typer.models.OptionInfo) else False
+    plain = bool(plain) if not isinstance(plain, typer.models.OptionInfo) else False
+    actions = list(actions) if (actions is not None and not isinstance(actions, typer.models.OptionInfo)) else None
+    tool = list(tool) if (tool is not None and not isinstance(tool, typer.models.OptionInfo)) else None
 
     plain = use_plain_output(plain)
     adapter = get_adapter()
@@ -633,12 +657,13 @@ def fix_command(
 
         def _fmt_delta(val: float, is_better_when_higher: bool, unit: str = "") -> str:
             if abs(val) < 1e-4:
-                return f"0.0{unit}"
+                return "same"
             sign = "+" if val > 0 else ""
-            txt = f"{sign}{val}{unit}"
+            is_good = (val > 0) if is_better_when_higher else (val < 0)
+            word = "better" if is_good else "worse"
+            txt = f"{sign}{val}{unit} ({word})"
             if plain:
                 return txt
-            is_good = (val > 0) if is_better_when_higher else (val < 0)
             col = "spring_green2" if is_good else "red1"
             return f"[{col}]{txt}[/{col}]"
 
@@ -784,4 +809,7 @@ def fix_command(
         }
 
     log_path = append_fix_log(log_record)
-    console.print(f"[dim]Audit record appended to {log_path.name}[/dim]")
+    console.print(f"\n[dim]Audit record saved to {log_path}[/dim]")
+    from deskflow.ui.components import render_key_hints
+
+    console.print(render_key_hints([("Enter", "Return to Menu"), ("Q", "Quit")], plain=plain))

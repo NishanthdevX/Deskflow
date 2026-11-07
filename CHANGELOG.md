@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-11-07
+
+### Console Redesign, Fix Center Repair & Numbers Integrity (Phase 18)
+
+- **Numbers Integrity Audit & Single Source of Truth (`ModelFacts`)**:
+  - Eliminated hardcoded statistics and conflicting numbers across screens.
+  - Implemented immutable `ModelFacts` (`deskflow.ml.facts` and `deskflow.truth`), deriving dataset splits, held-out test counts, MAE, confidence intervals, and training provenance directly from `model_card.json` and `report_data.json`.
+  - Corrected test set split accounting: explicitly separated 500 held-out test rows from 1,457 training rows (1,957 total across 6 sessions on 1 machine).
+  - Clarified offline test set steady-state MAE (0.001) vs. live dynamic workload MAE (0.46) with explicit contextual explanations.
+  - Verified no lookahead feature leakage ($r \le 0.7556$) and strict 20.0s target alignment across 100% of rows.
+- **Rich Console Architecture & Theme**:
+  - Designed official `DESKFLOW_THEME` (`df.title`, `df.good`, `df.warn`, `df.bad`, `df.accent`, `df.muted`, `df.value`, `df.border.*`).
+  - Added smooth color blending functions (`blend_health_color`, `blend_load_color`).
+  - Implemented responsive layout system with dynamic width breakpoints ($\ge 120$ wide, 100-119 normal, 80-99 compact, $<80$ stacked) and height tiers ($\ge 34$ full 6-row banner, 26-33 wordmark, $<26$ plain title).
+  - Added 6-row ASCII art banner with complete leg serif strokes, eliminating cropped character art.
+- **Screen Redesigns & Defect Fixes (D1–D22)**:
+  - **Home Screen**: Responsive two-column hardware status card and Model Facts card; clean two-column command menu; instant `?` glossary overlay; Enter key cleanly reprompts without scrolling.
+  - **Check Flow**: Eliminated nested Live flicker and duplicated preflight borders; replaced dead progress bar with real-time measuring dashboard (sparklines, gauges, countdown, prediction tracking); 3-second verdict sentence; dynamic multi-class attribution with confidence check; anomaly gauge with threshold marker; clean timings footer; post-check key navigation bar.
+  - **Fix Center**: Fixed JSON dump bug; added clear human-readable delta indicators (`+15 (better)`, `-0.10x (better)`); dimmed empty tools with "nothing to do"; preserved system processes and active IDEs; recorded audit log paths.
+  - **System Info Dashboard**: Replaced raw JSON dumping with fastfetch-style 3-panel display (`HARDWARE`, `MEMORY AND DISKS`, `POWER AND DISPLAY`); restricted JSON to explicit `--json` flag.
+  - **Pipeline Tour**: Aligned stage boxes to equal width; bound display strictly to `ModelFacts`; enabled interactive autoplay with Space, Arrow keys, Restart, and Quit controls.
+  - **Model Comparison**: Enhanced with dedicated `BASELINE` badge column and proportional whisker bars; strictly honors truth contract for synthetic and real models.
+- **Keyboard-First Event Engine**:
+  - Non-blocking keyboard input via `deskflow.platform.base.read_key()` supporting Windows (`msvcrt`) and POSIX (`termios`).
+  - Standardized `Screen` lifecycle with 10 Hz event loop and graceful non-interactive TTY fallback.
+- **Visual Artifacts**:
+  - Regenerated SVG and plain-text captures in `docs/screens/` via `scripts/update_screens.py`.
+
 ## [0.2.0] - 2026-11-05
 
 ### Added

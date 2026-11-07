@@ -55,3 +55,4 @@
 - **Platform Scope**: Supported exclusively on Windows 10/11 (x86_64) and macOS 12+ (Apple Silicon & Intel).
 - **Hardware Telemetry Scope**: Micro-benchmark probes monitor CPU, memory bandwidth, and disk I/O latency; workloads constrained exclusively on dedicated GPUs are not directly measured.
 - **Single-Host Baselines**: Baselines and training splits are calibrated to the specific host hardware.
+

@@ -1,26 +1,21 @@
-                    [DESKFLOW FIX CENTER - TOOLS INVENTORY]                    
-+-----------------------------------------------------------------------------+
-| # | Tool               |   Risk    | Measured Potential | What it changes   |
-|---+--------------------+-----------+--------------------+-------------------|
-| 1 | Clean temporary    |  [SAFE]   |   3.3 MB cleanable | Deletes files     |
-|   | files              |           |                    | older than 24h in |
-|   |                    |           |                    | temp roots        |
-| 2 | Clean browser &    |  [SAFE]   |  2.1 MB (10 files) | Clears browser    |
-|   | app caches         |           |                    | caches (pages     |
-|   |                    |           |                    | load slower once) |
-| 3 | Empty Recycle Bin  | [CAUTION] | 220.1 MB (3 items) | Empties Recycle   |
-|   | / Trash            |           |                    | Bin permanently   |
-|   |                    |           |                    | (irreversible)    |
-| 4 | Trim process       |  [SAFE]   | 44 processes using | Reclaims memory   |
-|   | working sets       |           |          8062.5 MB | working sets      |
-|   |                    |           |       (reclaimable | (effect is        |
-|   |                    |           |    amount unknown) | temporary)        |
-| 5 | Close idle         | [CAUTION] |    0.0 MB across 0 | Gracefully closes |
-|   | windowed apps      |           |       app group(s) | idle background   |
-|   |                    |           |                    | windowed          |
-|   |                    |           |                    | applications      |
-| 6 | End heavy          | [CAUTION] |      8 heavy tasks | Terminates top    |
-|   | background tasks   |           |    using 7660.9 MB | non-protected     |
-|   |                    |           |       (reclaimable | heavy background  |
-|   |                    |           |    amount unknown) | processes         |
-+-----------------------------------------------------------------------------+
+                              [DESKFLOW FIX CENTER - TOOLS INVENTORY]                               
+┌───┬───────────────────────────┬───────────┬──────────────────────────┬───────────────────────────┐
+│ # │ Tool                      │   Risk    │       Measured Potential │ What it changes           │
+├───┼───────────────────────────┼───────────┼──────────────────────────┼───────────────────────────┤
+│ 1 │ Clean temporary files     │  [SAFE]   │       278.6 MB cleanable │ Deletes files older than  │
+│   │                           │           │                          │ 24h in temp roots         │
+│ 2 │ Clean browser & app       │  [SAFE]   │        6.6 MB (15 files) │ Clears browser caches     │
+│   │ caches                    │           │                          │ (pages load slower once)  │
+│ 3 │ Empty Recycle Bin / Trash │  CAUTION  │            nothing to do │ Empties Recycle Bin       │
+│   │                           │           │                          │ permanently               │
+│   │                           │           │                          │ (irreversible)            │
+│ 4 │ Trim process working sets │  [SAFE]   │       21 processes using │ Reclaims memory working   │
+│   │                           │           │   3633.6 MB (reclaimable │ sets (effect is           │
+│   │                           │           │          amount unknown) │ temporary)                │
+│ 5 │ Close idle windowed apps  │  CAUTION  │            nothing to do │ Gracefully closes idle    │
+│   │                           │           │                          │ background windowed       │
+│   │                           │           │                          │ applications              │
+│ 6 │ End heavy background      │ [CAUTION] │      7 heavy tasks using │ Terminates top            │
+│   │ tasks                     │           │   3874.0 MB (reclaimable │ non-protected heavy       │
+│   │                           │           │          amount unknown) │ background processes      │
+└───┴───────────────────────────┴───────────┴──────────────────────────┴───────────────────────────┘

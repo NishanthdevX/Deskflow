@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -426,3 +427,51 @@ class MacOSAdapter(PlatformAdapter):
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
         return results
+
+    def read_key(self, timeout: float = 0.1) -> str | None:
+        """Read a single keypress without echoing using termios and select."""
+        if not sys.stdin.isatty():
+            return None
+        import select
+        import termios
+        import tty
+
+        fd = sys.stdin.fileno()
+        try:
+            old_settings = termios.tcgetattr(fd)
+        except Exception:
+            return None
+        try:
+            tty.setraw(fd)
+            rlist, _, _ = select.select([sys.stdin], [], [], timeout)
+            if not rlist:
+                return None
+            ch = sys.stdin.read(1)
+            if ch == "\x1b":
+                rlist2, _, _ = select.select([sys.stdin], [], [], 0.05)
+                if rlist2:
+                    seq = sys.stdin.read(2)
+                    if seq == "[A":
+                        return "up"
+                    elif seq == "[B":
+                        return "down"
+                    elif seq == "[C":
+                        return "right"
+                    elif seq == "[D":
+                        return "left"
+                return "esc"
+            elif ch in ("\r", "\n"):
+                return "enter"
+            elif ch == " ":
+                return "space"
+            elif ch == "\x03":
+                return "ctrl-c"
+            return ch.lower()
+        except Exception:
+            return None
+        finally:
+            try:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            except Exception:
+                pass
+

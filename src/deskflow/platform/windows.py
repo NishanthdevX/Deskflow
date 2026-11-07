@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import sys
 import tempfile
 import time
 from ctypes import wintypes
@@ -27,18 +28,42 @@ _WINDOWS_PROTECTED_PROCESSES = frozenset(
         "system",
         "system idle process",
         "registry",
+        "memory compression",
+        "memcompression",
         "smss.exe",
+        "smss",
         "csrss.exe",
+        "csrss",
         "wininit.exe",
+        "wininit",
         "services.exe",
+        "services",
         "lsass.exe",
+        "lsass",
         "winlogon.exe",
+        "winlogon",
         "svchost.exe",
+        "svchost",
         "explorer.exe",
+        "explorer",
         "dwm.exe",
+        "dwm",
         "fontdrvhost.exe",
+        "fontdrvhost",
         "msmpeng.exe",
+        "msmpeng",
         "searchindexer.exe",
+        "searchindexer",
+        "securityhealthservice.exe",
+        "securityhealthservice",
+        "runtimebroker.exe",
+        "runtimebroker",
+        "sihost.exe",
+        "sihost",
+        "taskhostw.exe",
+        "taskhostw",
+        "ctfmon.exe",
+        "ctfmon",
     }
 )
 
@@ -47,14 +72,23 @@ _WINDOWS_NEVER_OFFER = (
         {
             # Shells and terminals
             "cmd.exe",
+            "cmd",
             "powershell.exe",
+            "powershell",
             "pwsh.exe",
+            "pwsh",
             "bash.exe",
+            "bash",
             "zsh.exe",
+            "zsh",
             "sh.exe",
+            "sh",
             "wt.exe",
+            "wt",
             "windowsterminal.exe",
+            "windowsterminal",
             "conhost.exe",
+            "conhost",
             "mintty.exe",
             "alacritty.exe",
             "wezterm-gui.exe",
@@ -63,25 +97,45 @@ _WINDOWS_NEVER_OFFER = (
             "hyper.exe",
             # IDEs and editors
             "code.exe",
+            "code",
             "cursor.exe",
+            "cursor",
             "antigravity.exe",
+            "antigravity",
             "pycharm64.exe",
             "pycharm.exe",
+            "pycharm",
             "idea64.exe",
             "idea.exe",
+            "idea",
             "devenv.exe",
+            "devenv",
             "sublime_text.exe",
+            "sublime_text",
             "notepad++.exe",
+            "notepad.exe",
+            "notepad",
             # File manager and shell UI
             "explorer.exe",
+            "explorer",
             "dwm.exe",
+            "dwm",
             "shellexperiencehost.exe",
             "startmenuexperiencehost.exe",
             "searchhost.exe",
             "taskbar.exe",
+            # Webview and helpers
+            "msedgewebview2.exe",
+            "msedgewebview2",
+            "webview2.exe",
+            "webview2",
+            "chrome_crashpad_handler.exe",
+            "crashpad_handler.exe",
             # Security tools
             "msmpeng.exe",
+            "msmpeng",
             "securityhealthservice.exe",
+            "securityhealthservice",
             "nissrv.exe",
             "windowsdefender.exe",
             # Presentation and conferencing apps
@@ -503,6 +557,41 @@ class WindowsAdapter(PlatformAdapter):
     def full_process_snapshot(self) -> list[ProcessSample]:
         """Return a complete process pass across the system for heavy-task analysis."""
         return _full_process_snapshot_win32()
+
+    def read_key(self, timeout: float = 0.1) -> str | None:
+        """Read a single keypress without echoing using msvcrt."""
+        if not sys.stdin.isatty():
+            return None
+        import msvcrt
+        import time
+
+        start = time.time()
+        while time.time() - start < timeout:
+            if msvcrt.kbhit():
+                ch = msvcrt.getwch()
+                if ch in ("\x00", "\xe0"):
+                    code = msvcrt.getwch()
+                    if code == "H":
+                        return "up"
+                    elif code == "P":
+                        return "down"
+                    elif code == "K":
+                        return "left"
+                    elif code == "M":
+                        return "right"
+                    return None
+                elif ch in ("\r", "\n"):
+                    return "enter"
+                elif ch == " ":
+                    return "space"
+                elif ch == "\x1b":
+                    return "esc"
+                elif ch == "\x03":
+                    return "ctrl-c"
+                return ch.lower()
+            time.sleep(0.01)
+        return None
+
 
 
 class SHQUERYRBINFO(ctypes.Structure):

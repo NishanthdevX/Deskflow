@@ -53,3 +53,6 @@ def setup_logging(verbose: bool = False, debug: bool = False) -> Path:
 def get_log_file_path() -> Path:
     """Return path to the active deskflow.log file."""
     return get_data_dir() / "logs" / "deskflow.log"
+
+
+configure_logging = setup_logging

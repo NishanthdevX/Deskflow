@@ -1,9 +1,12 @@
-"""Animated pipeline visualization: real-time data, models, and training flow."""
+"""Animated pipeline visualization and guided architectural tour: real-time data, models, and training flow."""
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import shutil
 import time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -12,7 +15,6 @@ from rich.console import Console, Group
 from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
-from rich.text import Text
 
 from deskflow.baseline import Baseline, load_baseline
 from deskflow.collector.models import Record
@@ -22,21 +24,55 @@ from deskflow.commands.fix import run_fast_inventory
 from deskflow.features.extract import build_row
 from deskflow.health.score import compute_health_score
 from deskflow.ml.artifacts import resolve_model_dir
+from deskflow.ml.facts import ModelFacts, load_model_facts
 from deskflow.ml.runtime import RuntimeModels
 from deskflow.platform.base import PlatformAdapter
 from deskflow.platform.factory import get_adapter
-from deskflow.truth import load_provenance
-from deskflow.ui.theme import use_plain_output
+from deskflow.ui.components import render_key_hints
+from deskflow.ui.theme import COLOR_CYAN, COLOR_GREEN, COLOR_GREY, use_plain_output
 
 logger = logging.getLogger(__name__)
 
 STAGES = [
-    ("SENSORS", "CPU RAM\ndisk", 0),
-    ("PROBE", "3 micro\ntests", 1),
-    ("FEATURES", "27 stats\n6/12 s", 2),
-    ("MODELS", "Ridge\nRF XGB", 3),
-    ("SCORE+", "CAUSE\nHEALTH", 4),
-    ("FIX", "AND\nRE-SCAN", 5),
+    ("SENSORS", "CPU RAM\nDisk", 0),
+    ("PROBE", "3 Micro\nTests", 1),
+    ("FEATURES", "27 Stats\n6/12 s", 2),
+    ("MODELS", "Ridge RF\nXGBoost", 3),
+    ("SCORE+", "Health\n& Cause", 4),
+    ("FIX", "Plan &\nRe-scan", 5),
+]
+
+STAGE_DESCRIPTIONS = [
+    (
+        "SENSORS",
+        "Hardware Telemetry Sampling",
+        "Samples CPU usage per core, frequency ratio, memory commit bytes, swap/pagefile usage, disk I/O throughput, and active user processes every second.",
+    ),
+    (
+        "PROBE",
+        "Deterministic Ground-Truth Latency",
+        "Executes 3 lightweight micro-benchmarks (CPU arithmetic, memory bandwidth, small disk writes) timed with high-resolution perf_counter_ns.",
+    ),
+    (
+        "FEATURES",
+        "Rolling Time-Series Windows",
+        "Computes 27 rolling statistics over 6-second and 12-second ring buffers (mean, min, max, linear trend slopes, and probe latency ratios).",
+    ),
+    (
+        "MODELS",
+        "Multi-Model Slowdown Inference",
+        "Runs pre-trained regression models (XGBoost, Random Forest, Ridge) in < 5 ms to predict system responsiveness 20 seconds ahead.",
+    ),
+    (
+        "SCORE+",
+        "Deterministic Scoring & Diagnosis",
+        "Maps predicted slowdown ratio to a transparent 0-100 Health Score, attributes root causes with class probabilities, and checks anomaly threshold.",
+    ),
+    (
+        "FIX",
+        "Fix Center & Verification",
+        "Inventories cleanable temp files and caches under strict safety allowlists, protects IDEs and system processes, and verifies recovery with re-scan.",
+    ),
 ]
 
 
@@ -44,28 +80,20 @@ def render_pipeline_frame(
     active_stage: int,
     packet_pos: float,
     real_value_text: str,
-    prov_dict: dict[str, Any],
+    facts: ModelFacts | None = None,
     plain: bool = False,
     compact: bool = True,
+    prov_dict: dict[str, Any] | None = None,
 ) -> Group:
-    """Render a single frame of the live pipeline visualization.
-
-    Parameters
-    ----------
-    active_stage: index of currently active box (0 to 5, or 6 for all done).
-    packet_pos: normalized packet position (0.0 to 5.0).
-    real_value_text: text description of real measurements at current stage.
-    prov_dict: dictionary of provenance data from model card.
-    plain: if True, render in ASCII without colors.
-    compact: if True, format tightly to fit 80x24 terminal.
-    """
-    box_w = 9
+    """Render a single frame of the live pipeline visualization with aligned boxes."""
+    if facts is None:
+        facts = load_model_facts()
+    box_w = 10
     arrow_sym = "-->" if plain else "──▶"
     packet_sym = "*" if plain else "●"
     path_sym = "-" if plain else "━"
 
     # 1. Upper Flow Lane: 6 boxes connected by arrows
-    # Build the 5 vertical lines of the 6 boxes
     lines: list[str] = ["", "", "", "", "", ""]
 
     for i, (title, sub, _) in enumerate(STAGES):
@@ -73,21 +101,15 @@ def render_pipeline_frame(
         sub1 = sub_lines[0] if len(sub_lines) > 0 else ""
         sub2 = sub_lines[1] if len(sub_lines) > 1 else ""
 
-        # Determine color/style for this box
         if plain:
-            style_start = ""
-            style_end = ""
+            style_start, style_end = "", ""
         elif i < active_stage:
-            style_start = "[green]"
-            style_end = "[/green]"
+            style_start, style_end = f"[{COLOR_GREEN}]", f"[/{COLOR_GREEN}]"
         elif i == active_stage:
-            style_start = "[bold cyan]"
-            style_end = "[/bold cyan]"
+            style_start, style_end = f"[bold {COLOR_CYAN}]", f"[/bold {COLOR_CYAN}]"
         else:
-            style_start = "[dim]"
-            style_end = "[/dim]"
+            style_start, style_end = f"[{COLOR_GREY}]", f"[/{COLOR_GREY}]"
 
-        # Format box content
         b_top = "+" + "-" * (box_w - 2) + "+" if plain else "┌" + "─" * (box_w - 2) + "┐"
         b_mid1 = f"|{title:^{box_w - 2}}|" if plain else f"│{title:^{box_w - 2}}│"
         b_mid2 = f"|{sub1:^{box_w - 2}}|" if plain else f"│{sub1:^{box_w - 2}}│"
@@ -101,10 +123,9 @@ def render_pipeline_frame(
         lines[4] += f"{style_start}{b_bot}{style_end}"
 
         if i < len(STAGES) - 1:
-            # Arrow between boxes
             lines[0] += "   "
-            arr_style = "[bold cyan]" if i == active_stage and not plain else "[dim]"
-            arr_end = "[/bold cyan]" if i == active_stage and not plain else "[/dim]"
+            arr_style = f"[bold {COLOR_CYAN}]" if (i == active_stage and not plain) else f"[{COLOR_GREY}]"
+            arr_end = f"[/bold {COLOR_CYAN}]" if (i == active_stage and not plain) else f"[/{COLOR_GREY}]"
             if plain:
                 arr_style, arr_end = "", ""
             lines[1] += f"{arr_style}{arrow_sym}{arr_end}"
@@ -112,98 +133,103 @@ def render_pipeline_frame(
             lines[3] += "   "
             lines[4] += "   "
 
-    # Line 5: Packet track under the boxes
-    # Total width of 6 boxes (9 each) + 5 gaps (3 each) = 54 + 15 = 69 chars
-    track_chars = [" "] * 69
-    curr_col = min(68, max(0, int(packet_pos * 12.0) + 4))
+    # Track line for moving packet (75 cols total)
+    track_chars = [" "] * 75
+    curr_col = min(74, max(0, int(packet_pos * 13.0) + 4))
 
-    # Fill path up to packet
     for c in range(4, curr_col):
         track_chars[c] = path_sym
     track_chars[curr_col] = packet_sym
 
     packet_line = "".join(track_chars)
     if not plain:
-        packet_line = f"[bold cyan]{packet_line}[/bold cyan]"
+        packet_line = f"[bold {COLOR_CYAN}]{packet_line}[/bold {COLOR_CYAN}]"
     lines[5] = packet_line
 
     flow_text = "\n".join(lines)
-
-    # Upper panel
     upper_panel = Panel(
         flow_text,
         title="[ LIVE TELEMETRY & INFERENCE PIPELINE ]",
-        border_style="cyan" if not plain else "white",
+        border_style=COLOR_CYAN if not plain else "white",
         box=box.ASCII if plain else box.ROUNDED,
     )
 
-    # Real value line
-    val_text = Text()
-    if plain:
-        val_text.append(f"STAGE VALUE: {real_value_text}")
-    else:
-        val_text.append("STAGE VALUE: ", style="bold")
-        val_text.append(real_value_text, style="bold cyan")
+    # Stage description + real live data split
+    stg_info = STAGE_DESCRIPTIONS[min(active_stage, len(STAGE_DESCRIPTIONS) - 1)]
+    left_tbl = Table(box=box.SIMPLE if not plain else box.ASCII, show_header=False, expand=True)
+    left_tbl.add_column("Property", style="bold cyan" if not plain else "bold")
+    left_tbl.add_column("Detail")
+    left_tbl.add_row("Stage", stg_info[0])
+    left_tbl.add_row("Concept", stg_info[1])
+    left_tbl.add_row("Operation", stg_info[2])
 
-    # Lower lane: Training pipeline from model card
-    is_synth = prov_dict.get("synthetic", True)
-    train_rows = prov_dict.get("train_rows", 0)
-    test_rows = prov_dict.get("test_rows", 0)
-    sessions = prov_dict.get("sessions_count", 0)
-    machines = prov_dict.get("machines_count", 1)
-    ds_hash = prov_dict.get("dataset_hash", "")[:8] if prov_dict.get("dataset_hash") else "none"
+    p_left = Panel(
+        left_tbl,
+        title="[ WHAT HAPPENS ]",
+        border_style=COLOR_GREY if not plain else "white",
+        box=box.ASCII if plain else box.ROUNDED,
+    )
 
-    if is_synth:
-        stat_line = (
-            f"Dataset: SYNTHETIC DEMO | Train: {train_rows} rows | "
-            f"Test: {test_rows} rows | Status: DEMO"
-        )
-    else:
-        stat_line = (
-            f"Dataset SHA-256: {ds_hash} | Train: {train_rows} rows | "
-            f"Test: {test_rows} rows ({sessions} sessions, {machines} machines)"
-        )
+    right_tbl = Table(box=box.SIMPLE if not plain else box.ASCII, show_header=False, expand=True)
+    right_tbl.add_column("Metric", style="bold green" if not plain else "bold")
+    right_tbl.add_column("Live Telemetry Value")
+    right_tbl.add_row("Readout", real_value_text)
 
+    p_right = Panel(
+        right_tbl,
+        title="[ REAL LIVE DATA ]",
+        border_style=COLOR_GREEN if not plain else "white",
+        box=box.ASCII if plain else box.ROUNDED,
+    )
+
+    split_grid = Table.grid(expand=True, padding=(0, 2))
+    split_grid.add_column(ratio=1)
+    split_grid.add_column(ratio=1)
+    split_grid.add_row(p_left, p_right)
+
+    # Lower lane: Training pipeline with real counts from ModelFacts (D1, D2 fix)
     lower_flow = (
         "COLLECT (lab + normal) -> DATASET (27 feats, holdout) -> "
         "TRAIN (grouped CV) -> EVALUATE (bootstrap) -> EXPORT"
     )
-    lower_content = f"{lower_flow}\n{stat_line}"
+    stat_line = (
+        f"Dataset SHA-256: {facts.dataset_hash[:8]} | {facts.dataset_split_summary}"
+        if not facts.synthetic
+        else f"Dataset: SYNTHETIC DEMO | {facts.train_rows} train, {facts.test_rows} test rows"
+    )
     lower_panel = Panel(
-        lower_content,
-        title="[ MODEL TRAINING PIPELINE (Model Card) ]",
-        border_style="dim" if not plain else "white",
+        f"{lower_flow}\n{stat_line}",
+        title="[ MODEL TRAINING PIPELINE (Model Facts) ]",
+        border_style=COLOR_GREY if not plain else "white",
         box=box.ASCII if plain else box.ROUNDED,
     )
 
-    return Group(upper_panel, val_text, lower_panel)
+    return Group(upper_panel, split_grid, lower_panel)
 
 
-def print_pipeline_tables(
-    console: Console,
-    prov_dict: dict[str, Any],
-    plain: bool = False,
-) -> None:
-    """Print the [ MODELS USED ] and [ HOW IT IS TRAINED ] tables."""
+def print_pipeline_tables(console: Console, facts: ModelFacts, plain: bool = False) -> None:
+    """Print the [ MODELS USED ] and [ HOW IT IS TRAINED ] tables strictly from ModelFacts."""
     box_style = box.ASCII if plain else box.ROUNDED
-    is_synth = prov_dict.get("synthetic", True)
 
-    # 1. MODELS USED Table
+    # 1. MODELS USED Table (D1, D3 fix: read from ModelFacts only)
     tbl_models = Table(
         title="[ MODELS USED ]",
         box=box_style,
         expand=True,
         show_header=True,
     )
-    tbl_models.add_column("Task", style="bold cyan" if not plain else "bold", width=15)
-    tbl_models.add_column("Model(s)", width=18)
+    tbl_models.add_column("Task", style="bold cyan" if not plain else "bold", width=18)
+    tbl_models.add_column("Model(s)", width=22)
     tbl_models.add_column("Role / Function", ratio=1)
-    tbl_models.add_column("Held-Out Accuracy", justify="right", width=16)
+    tbl_models.add_column("Held-Out Accuracy", justify="right", width=24)
 
-    held_reg = "Synthetic demo" if is_synth else "MAE 0.124 [0.10, 0.15]"
-    held_clf = "Synthetic demo" if is_synth else "F1 0.94 (held-out)"
-    held_ano = "Unsupervised" if is_synth else "Unsupervised"
-    held_hlt = "Deterministic"
+    if facts.synthetic:
+        held_reg = "Synthetic demo"
+        held_clf = "Synthetic demo"
+    else:
+        ci_str = f"[{facts.primary_regressor_ci[0]:.4f}, {facts.primary_regressor_ci[1]:.4f}]"
+        held_reg = f"MAE {facts.primary_regressor_mae:.4f} {ci_str}"
+        held_clf = f"F1 {facts.primary_classifier_f1:.2f} (held-out)"
 
     tbl_models.add_row(
         "Regression",
@@ -213,26 +239,26 @@ def print_pipeline_tables(
     )
     tbl_models.add_row(
         "Classification",
-        "XGBoost Classifier",
-        "Tags bottleneck cause (CPU, RAM, Disk, Load)",
+        "RandomForest, XGBoost",
+        "Attributes bottleneck cause (CPU, RAM, Disk, Load)",
         held_clf,
     )
     tbl_models.add_row(
         "Anomaly Detection",
         "Isolation Forest",
         "Flags unusual telemetry vs healthy baseline",
-        held_ano,
+        f"Threshold {facts.thresholds.get('anomaly_threshold', 0.6009):.4f}",
     )
     tbl_models.add_row(
         "Health Scoring",
-        "Hardware-relative scaler",
-        "Computes 0-100 system care rating",
-        held_hlt,
+        "Deterministic Formula",
+        "Maps predicted slowdown ratio to 0-100 score",
+        "Deterministic (Ratio <= 1.0 -> 100)",
     )
     console.print()
     console.print(tbl_models)
 
-    # 2. HOW IT IS TRAINED Table
+    # 2. HOW IT IS TRAINED Table (D3 fix: 27 features, no p90)
     tbl_trained = Table(
         title="[ HOW IT IS TRAINED ]",
         box=box_style,
@@ -244,20 +270,20 @@ def print_pipeline_tables(
 
     ds_str = (
         "Synthetic demo dataset (simulated profiles)"
-        if is_synth
-        else f"SHA-256 {prov_dict.get('dataset_hash', 'unknown')}"
+        if facts.synthetic
+        else f"SHA-256 {facts.dataset_hash} ({facts.dataset_split_summary})"
     )
     tbl_trained.add_row(
         "Data Collection",
-        "Fault injection lab sessions (CPU, RAM, Disk, Load) + realistic user workload runs",
+        "Micro-benchmark probe latencies and hardware sensor samples across power states",
     )
     tbl_trained.add_row(
         "Feature Engineering",
-        "27 rolling statistics over 6s and 12s windows (mean, p90, trend, probe latencies)",
+        "27 rolling statistics over 6s and 12s windows (mean, min, max, trend slopes, probe latencies)",
     )
     tbl_trained.add_row(
         "Splitting Strategy",
-        "Grouped temporal holdout by session ID (newest sessions held out; zero leakage)",
+        "Strict grouped temporal holdout by session ID (newest sessions held out; zero leakage)",
     )
     tbl_trained.add_row(
         "Evaluation Protocol",
@@ -274,34 +300,29 @@ def pipeline_command(
     fast: bool = False,
     plain: bool = False,
 ) -> None:
-    """Run animated pipeline visualization at 8 fps or print final frame."""
+    """Run animated pipeline visualization or guided tour with keyboard controls."""
     plain = use_plain_output(plain)
     console = Console(no_color=plain)
     adapter: PlatformAdapter = get_adapter()
 
-    # Model and provenance
-    prov = load_provenance()
-    prov_dict = {
-        "synthetic": prov.synthetic,
-        "train_rows": prov.train_rows,
-        "test_rows": prov.test_rows,
-        "dataset_hash": prov.dataset_hash,
-        "sessions_count": 8 if prov.synthetic else 14,
-        "machines_count": 1,
-    }
+    facts = load_model_facts()
 
-    # Gather real telemetry and live inference
-    sampler = Sampler(adapter)
+    # Gather live telemetry values
+    sampler = Sampler(adapter=adapter, interval_s=1.0)
+    data_dir = None
+    with contextlib.suppress(Exception):
+        from deskflow.paths import get_data_dir
+
+        data_dir = get_data_dir()
+
+    probe_res = run_probe(data_dir=data_dir, repeats=1)
     sample, procs = sampler.sample()
 
-    # Micro probe
-    probe_res = run_probe()
     tot_ms = probe_res.total_ns / 1_000_000.0
     c_ms = probe_res.cpu_ns / 1_000_000.0
     m_ms = probe_res.mem_ns / 1_000_000.0
     d_ms = probe_res.disk_ns / 1_000_000.0
 
-    # Baseline & features
     try:
         baseline = load_baseline()
     except Exception:
@@ -332,7 +353,7 @@ def pipeline_command(
     history = [rec] * 6
     feat_dict = build_row(history, baseline, rec)
 
-    # Runtime models
+    # Runtime model inference
     try:
         model_dir, _ = resolve_model_dir()
         runtime = RuntimeModels.load(model_dir)
@@ -346,69 +367,42 @@ def pipeline_command(
         cause_tag = max(probs.keys(), key=lambda k: probs[k]) if probs else "healthy"
         cause_conf = float(probs.get(cause_tag, 0.95))
     except Exception:
-        xgb_ratio = 1.05
-        rf_ratio = 1.04
-        ridge_ratio = 1.02
-        cause_tag = "healthy"
-        cause_conf = 0.95
+        xgb_ratio, rf_ratio, ridge_ratio = 1.05, 1.04, 1.02
+        cause_tag, cause_conf = "healthy", 0.95
 
     health_score, _ = compute_health_score(xgb_ratio)
-
-    # Fix inventory
     tools = run_fast_inventory(adapter)
     safe_tools = [t for t in tools if t.risk.lower() == "safe"]
     safe_pot_mb = sum(t.potential_bytes for t in safe_tools) / (1024 * 1024)
 
-    # Stage texts showing REAL measurements
-    import shutil
-    from pathlib import Path
-
     free_gb = shutil.disk_usage(Path.home()).free / (1024**3)
     mem_used_gb = (sample.mem_total_bytes - sample.mem_available_bytes) / (1024**3)
+
     stage_texts = [
-        (
-            f"CPU {sample.cpu_percent_mean:.1f}%, RAM {sample.mem_percent:.1f}% "
-            f"({mem_used_gb:.1f} GB), Free disk {free_gb:.1f} GB"
-        ),
-        (
-            f"Probe total {tot_ms:.2f} ms "
-            f"(CPU: {c_ms:.2f} ms, RAM: {m_ms:.2f} ms, Disk: {d_ms:.2f} ms)"
-        ),
-        (
-            f"27 rolling features: CPU mean {feat_dict['cpu_percent_mean_mean_6s']:.1f}%, "
-            f"RAM slope {feat_dict['mem_percent_slope_12s']:+.2f}%, probe latencies"
-        ),
-        (
-            f"Inference: XGBoost {xgb_ratio:.2f}x, RF {rf_ratio:.2f}x, "
-            f"Ridge {ridge_ratio:.2f}x, Persistence 1.00x"
-        ),
-        (
-            f"Health Score {health_score}/100, Predicted Slowdown {xgb_ratio:.2f}x, "
-            f"Cause '{cause_tag}' ({cause_conf:.0%})"
-        ),
-        (
-            f"Fix Center: {len(safe_tools)} safe tools available, "
-            f"{safe_pot_mb:.1f} MB measured potential"
-        ),
+        f"CPU {sample.cpu_percent_mean:.1f}%, RAM {sample.mem_percent:.1f}% ({mem_used_gb:.1f} GB), Free disk {free_gb:.1f} GB",
+        f"Probe total {tot_ms:.2f} ms (CPU: {c_ms:.2f} ms, RAM: {m_ms:.2f} ms, Disk: {d_ms:.2f} ms)",
+        f"27 rolling features: CPU mean {feat_dict['cpu_percent_mean_mean_6s']:.1f}%, RAM slope {feat_dict['mem_percent_slope_12s']:+.2f}%, probe latencies",
+        f"Inference: XGBoost {xgb_ratio:.2f}x, RF {rf_ratio:.2f}x, Ridge {ridge_ratio:.2f}x, Persistence 1.00x",
+        f"Health Score {health_score}/100, Predicted Slowdown {xgb_ratio:.2f}x, Cause '{cause_tag}' ({cause_conf:.0%})",
+        f"Fix Center: {len(safe_tools)} safe tools available, {safe_pot_mb:.1f} MB measured potential",
     ]
 
     is_interactive = console.is_terminal and not static and not plain
 
     if not is_interactive:
-        # Static single frame render
         final_group = render_pipeline_frame(
             active_stage=5,
             packet_pos=5.0,
             real_value_text=stage_texts[-1],
-            prov_dict=prov_dict,
+            facts=facts,
             plain=plain,
             compact=True,
         )
         console.print(final_group)
-        print_pipeline_tables(console, prov_dict, plain=plain)
+        print_pipeline_tables(console, facts, plain=plain)
         return
 
-    # Rich Live animation: 8 fps for ~25s (or ~12.5s if fast)
+    # Interactive Guided Tour on Alternate Screen (D21 fix)
     fps = 8
     total_stages = len(stage_texts)
     seconds_per_stage = 2.0 if fast else 4.0
@@ -419,45 +413,49 @@ def pipeline_command(
         active_stage=0,
         packet_pos=0.0,
         real_value_text=stage_texts[0],
-        prov_dict=prov_dict,
+        facts=facts,
         plain=plain,
         compact=True,
     )
 
-    try:
-        with Live(
-            start_frame,
-            console=console,
-            refresh_per_second=fps,
-            vertical_overflow="crop",
-        ) as live:
-            for s_idx in range(total_stages):
-                for f_idx in range(frames_per_stage):
+    with Live(start_frame, console=console, screen=True, refresh_per_second=fps) as live:
+        s_idx = 0
+        paused = False
+        while s_idx < total_stages:
+            for f_idx in range(frames_per_stage):
+                k = adapter.read_key(0.01)
+                if k == "space":
+                    paused = not paused
+                elif k == "right":
+                    s_idx = min(total_stages - 1, s_idx + 1)
+                    break
+                elif k == "left":
+                    s_idx = max(0, s_idx - 1)
+                    break
+                elif k == "r":
+                    s_idx = 0
+                    break
+                elif k == "q":
+                    s_idx = total_stages
+                    break
+
+                if not paused:
                     frac = f_idx / frames_per_stage
                     pos = s_idx + frac
                     frame = render_pipeline_frame(
                         active_stage=s_idx,
                         packet_pos=pos,
                         real_value_text=stage_texts[s_idx],
-                        prov_dict=prov_dict,
+                        facts=facts,
                         plain=plain,
                         compact=True,
                     )
                     live.update(frame)
-                    time.sleep(frame_delay)
+                time.sleep(frame_delay)
+            if not paused:
+                s_idx += 1
 
-            # Final completed frame
-            final_frame = render_pipeline_frame(
-                active_stage=5,
-                packet_pos=5.0,
-                real_value_text=stage_texts[-1],
-                prov_dict=prov_dict,
-                plain=plain,
-                compact=True,
-            )
-            live.update(final_frame)
-    except KeyboardInterrupt:
-        pass
-
-    # Print summary tables below the completed animation
-    print_pipeline_tables(console, prov_dict, plain=plain)
+    # Leave alternate screen and print tables inline into scrollback
+    print_pipeline_tables(console, facts, plain=plain)
+    console.print()
+    console.print(render_key_hints([("Enter", "Return to Menu"), ("Q", "Quit")], plain=plain))

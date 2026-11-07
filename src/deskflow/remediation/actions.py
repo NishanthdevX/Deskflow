@@ -476,7 +476,13 @@ def find_heavy_tasks(
         if p.is_protected or p.pid <= 4 or p.pid in deskflow_tree_pids:
             continue
         p_name_lower = p.name.lower()
-        if p_name_lower in never_offer or p_name_lower in protected:
+        p_base = p_name_lower[:-4] if p_name_lower.endswith(".exe") else p_name_lower
+        if (
+            p_name_lower in never_offer
+            or p_base in never_offer
+            or p_name_lower in protected
+            or p_base in protected
+        ):
             continue
         by_name.setdefault(p_name_lower, []).append(p)
 

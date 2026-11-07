@@ -11,7 +11,7 @@ from typing import Any
 import psutil
 import typer
 from rich import box
-from rich.console import Console
+from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -19,16 +19,19 @@ from rich.text import Text
 from deskflow import __version__
 from deskflow.paths import get_data_dir
 from deskflow.platform.factory import get_adapter
-from deskflow.ui.widgets import score_bar
+from deskflow.ui.components import badge, bar
+from deskflow.ui.layout import get_terminal_dimensions
 
 app = typer.Typer(help="Fast hardware and operating system summary.")
 console = Console()
 
 FULL_LOGO = """
- ___  ____ ____ _  _ ____ _    ____ _ _ _ 
-|   \\| ___/ ___| |/ /| ___| |   /  \\ | | |
-| |) | _| \\___ \\ ' / | _|_| |__| () || | |
-|___/|____|____|_|\\_\\|_|  |_____\\__/  \\_/ 
+  ██████╗  ███████╗ ███████╗ ██╗  ██╗
+  ██╔══██╗ ██╔════╝ ██╔════╝ ██║ ██╔╝
+  ██║  ██║ █████╗   ███████╗ █████═╝ 
+  ██║  ██║ ██╔══╝   ╚════██║ ██╔═██╗ 
+  ██████╔╝ ███████╗ ███████║ ██║  ██╗
+  ╚═════╝  ╚══════╝ ╚══════╝ ╚═╝  ╚═╝ 
 """.strip("\n")
 
 COMPACT_LOGO = """
@@ -55,7 +58,6 @@ def _get_cached_static_hardware(adapter: Any) -> dict[str, Any]:
         except Exception:
             pass
 
-    # Cold fetch from adapter
     static_info: dict[str, Any] = {}
     try:
         static_info = dict(adapter.get_static_hardware())
@@ -68,7 +70,6 @@ def _get_cached_static_hardware(adapter: Any) -> dict[str, Any]:
             "resolution": "unknown",
         }
 
-    # Save cache
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         with open(cache_path, "w", encoding="utf-8") as f:
@@ -84,7 +85,7 @@ def render_info_dashboard(
     plain: bool = False,
     console_out: Console | None = None,
 ) -> None:
-    """Print high-density system specifications and resource usage."""
+    """Print high-density system specifications and resource usage (Phase 18 Section D5)."""
     from deskflow.ui.theme import configure_utf8_stdout, use_plain_output
 
     configure_utf8_stdout()
@@ -132,7 +133,7 @@ def render_info_dashboard(
                 else:
                     gpu_strs.append(g_name)
     if not gpu_strs:
-        gpu_strs.append("unknown")
+        gpu_strs.append("integrated / default display adapter")
 
     # 4. Memory
     mem = psutil.virtual_memory()
@@ -142,28 +143,25 @@ def render_info_dashboard(
     mem_pct = int(mem.percent)
     mem_str = (
         f"{mem_used_gb:.1f} / {mem_total_gb:.1f} GB "
-        f"({mem_avail_gb:.1f} GB free, {mem_pct}%) {score_bar(mem_pct, 8, plain)}"
+        f"({mem_avail_gb:.1f} GB free, {mem_pct}%) {bar(mem_pct / 100.0, 1.0, 8, plain)}"
     )
 
-    # 5. Swap / Pagefile
+    # 5. Swap
     swap = adapter.swap_memory()
     if swap is not None:
         swap_used_bytes, swap_pct = swap
         swap_used_gb = swap_used_bytes / (1024**3)
-        swap_str = f"{swap_used_gb:.1f} GB ({swap_pct:.0f}%) {score_bar(int(swap_pct), 8, plain)}"
+        swap_str = f"{swap_used_gb:.1f} GB ({swap_pct:.0f}%) {bar(swap_pct / 100.0, 1.0, 8, plain)}"
     else:
         pswap = psutil.swap_memory()
         swap_used_gb = pswap.used / (1024**3)
         swap_total_gb = pswap.total / (1024**3)
         swap_pct = int(pswap.percent)
-        swap_str = (
-            f"{swap_used_gb:.1f} / {swap_total_gb:.1f} GB ({swap_pct}%) "
-            f"{score_bar(swap_pct, 8, plain)}"
-        )
+        swap_str = f"{swap_used_gb:.1f} / {swap_total_gb:.1f} GB ({swap_pct}%) {bar(swap_pct / 100.0, 1.0, 8, plain)}"
 
     # 6. Disks
     disks_info: list[dict[str, Any]] = []
-    disk_lines: list[str] = []
+    disk_lines: list[tuple[str, str, bool]] = []
     try:
         parts = psutil.disk_partitions(all=False)
         seen = set()
@@ -179,11 +177,11 @@ def render_info_dashboard(
                 pct = int(du.percent)
                 fstype = p.fstype or "unknown"
                 is_warn = (100 - pct) < 15 or f_gb < 20.0
-                warn_tag = " [WARN]" if is_warn else ""
-                disk_lines.append(
+                line_str = (
                     f"{p.mountpoint} [{fstype}] {u_gb:.0f}/{t_gb:.0f} GB "
-                    f"({f_gb:.0f} GB free, {pct}%){warn_tag} {score_bar(pct, 8, plain)}"
+                    f"({f_gb:.0f} GB free, {pct}%) {bar(pct / 100.0, 1.0, 8, plain)}"
                 )
+                disk_lines.append((p.mountpoint, line_str, is_warn))
                 disks_info.append(
                     {
                         "mount": p.mountpoint,
@@ -204,38 +202,26 @@ def render_info_dashboard(
         u_gb = (s_du.total - s_du.free) / (1024**3)
         t_gb = s_du.total / (1024**3)
         pct = int((u_gb / max(1.0, t_gb)) * 100)
-        disk_lines.append(f". {u_gb:.0f}/{t_gb:.0f} GB ({pct}%) {score_bar(pct, 8, plain)}")
-        disks_info.append(
-            {
-                "mount": ".",
-                "filesystem": "unknown",
-                "total_bytes": s_du.total,
-                "used_bytes": s_du.total - s_du.free,
-                "free_bytes": s_du.free,
-                "percent": pct,
-            }
-        )
+        disk_lines.append((".", f". {u_gb:.0f}/{t_gb:.0f} GB ({pct}%) {bar(pct / 100.0, 1.0, 8, plain)}", False))
 
     # 7. Power
     bat = adapter.battery()
     if bat is not None:
         pwr_txt = "Charging/AC" if bat.plugged_in else "Discharging"
-        pwr_str = f"Battery {bat.percent:.0f}% ({pwr_txt})"
+        pwr_str = f"Battery {bat.percent:.0f}% ({pwr_txt}) {bar(bat.percent / 100.0, 1.0, 8, plain)}"
     else:
         pwr_str = "AC Power (Desktop)"
 
-    # 8. Uptime
+    # 8. Uptime & Display
     boot = psutil.boot_time()
     uptime_s = max(0, time.time() - boot)
     days = int(uptime_s // 86400)
     hours = int((uptime_s % 86400) // 3600)
     mins = int((uptime_s % 3600) // 60)
     uptime_str = f"{days}d {hours}h {mins}m" if days > 0 else f"{hours}h {mins}m"
-
-    # 9. Display resolution
     res_str = static_hw.get("resolution", "unknown")
 
-    # JSON output mode
+    # JSON mode
     if json_output:
         full_info = {
             "host_model": host_model,
@@ -259,47 +245,53 @@ def render_info_dashboard(
         active_console.print_json(json.dumps(full_info))
         return
 
-    # Layout: side-by-side fastfetch panel
-    grid = Table.grid(expand=True, padding=(0, 2))
-    grid.add_column("Logo", justify="left")
-    grid.add_column("Details", justify="left")
+    # Section 1: HARDWARE
+    tbl_hw = Table(box=box.SIMPLE if not plain else box.ASCII, show_header=False, expand=True)
+    tbl_hw.add_column("Key", style="bold cyan" if not plain else "bold", width=12)
+    tbl_hw.add_column("Val")
+    tbl_hw.add_row("Host", host_model)
+    tbl_hw.add_row("OS", os_str)
+    tbl_hw.add_row("CPU", cpu_str)
+    for i, g in enumerate(gpu_strs):
+        tbl_hw.add_row("GPU" if i == 0 else "", g)
 
-    w = active_console.width or 100
-    chosen_logo = FULL_LOGO if w >= 100 else COMPACT_LOGO
-    logo_text = Text(chosen_logo, style="bright_cyan bold" if not plain else "none")
+    p_hw = Panel(tbl_hw, title="[ HARDWARE ]", border_style="cyan" if not plain else "white", box=box.ROUNDED if not plain else box.ASCII)
 
-    details_table = Table(
-        box=box.ASCII if plain else box.SIMPLE,
-        show_header=False,
-        pad_edge=False,
-        expand=True,
-    )
-    details_table.add_column("Key", style="bold cyan" if not plain else "none", no_wrap=True)
-    details_table.add_column("Val", overflow="fold")
+    # Section 2: MEMORY AND DISKS
+    tbl_mem = Table(box=box.SIMPLE if not plain else box.ASCII, show_header=False, expand=True)
+    tbl_mem.add_column("Key", style="bold cyan" if not plain else "bold", width=12)
+    tbl_mem.add_column("Val")
+    tbl_mem.add_row("RAM", mem_str)
+    tbl_mem.add_row("Swap", swap_str)
+    for mnt, line, is_warn in disk_lines:
+        tag = " " + badge("WARN", "Warn", plain=plain) if is_warn else ""
+        tbl_mem.add_row(f"Disk ({mnt})", f"{line}{tag}")
 
-    details_table.add_row("Host", host_model)
-    details_table.add_row("OS", os_str)
-    details_table.add_row("CPU", cpu_str)
-    for i, g_str in enumerate(gpu_strs):
-        details_table.add_row("GPU" if i == 0 else "", g_str)
-    details_table.add_row("Memory", mem_str)
-    details_table.add_row("Swap", swap_str)
-    for i, dl in enumerate(disk_lines):
-        details_table.add_row("Disk" if i == 0 else "", dl)
-    details_table.add_row("Display", res_str)
-    details_table.add_row("Power", pwr_str)
-    details_table.add_row("Uptime", uptime_str)
-    details_table.add_row("Version", f"v{__version__}")
+    p_mem = Panel(tbl_mem, title="[ MEMORY AND DISKS ]", border_style="green" if not plain else "white", box=box.ROUNDED if not plain else box.ASCII)
 
-    grid.add_row(logo_text, details_table)
+    # Section 3: POWER AND DISPLAY
+    tbl_pwr = Table(box=box.SIMPLE if not plain else box.ASCII, show_header=False, expand=True)
+    tbl_pwr.add_column("Key", style="bold cyan" if not plain else "bold", width=12)
+    tbl_pwr.add_column("Val")
+    tbl_pwr.add_row("Power", pwr_str)
+    tbl_pwr.add_row("Display", res_str)
+    tbl_pwr.add_row("Uptime", uptime_str)
+    tbl_pwr.add_row("Version", f"v{__version__}")
 
-    panel = Panel(
-        grid,
-        title="[DESKFLOW SYSTEM INFO]",
-        box=box.ASCII if plain else box.ROUNDED,
-        border_style="cyan" if not plain else "none",
-    )
-    active_console.print(panel)
+    p_pwr = Panel(tbl_pwr, title="[ POWER AND DISPLAY ]", border_style="yellow" if not plain else "white", box=box.ROUNDED if not plain else box.ASCII)
+
+    right_stack = Group(p_hw, p_mem, p_pwr)
+
+    cols, _ = get_terminal_dimensions(active_console)
+    if cols >= 100:
+        grid = Table.grid(expand=True, padding=(0, 2))
+        grid.add_column("Logo", width=36)
+        grid.add_column("Panels", ratio=1)
+        logo_text = Text(FULL_LOGO, style="bold cyan" if not plain else "none")
+        grid.add_row(logo_text, right_stack)
+        active_console.print(grid)
+    else:
+        active_console.print(right_stack)
 
 
 @app.callback(invoke_without_command=True)

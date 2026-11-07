@@ -148,3 +148,12 @@ class PlatformAdapter(ABC):
     def full_process_snapshot(self) -> list[ProcessSample]:
         """Return a complete process pass across the system for heavy-task analysis."""
         return []
+
+    def read_key(self, timeout: float = 0.1) -> str | None:
+        """Read a single keypress without echoing.
+
+        Returns one of: 'up', 'down', 'left', 'right', 'enter', 'space',
+        'esc', 'ctrl-c', or a lowercase character. Returns None on timeout or non-TTY.
+        """
+        return None
+
